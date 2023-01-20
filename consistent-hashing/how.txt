@@ -1,0 +1,8 @@
+- Hash Ring
+  - A default hash function 
+        self.hash_function = (lambda key: int(md5(str(key).encode("utf-8")).hexdigest(), 16)
+  - Number of virtual nodes 
+  - If configuration needed
+    - Case1: If a new node is added
+    - Case2: If any conf changed for already exising node
+    In both the cases we need to trigger "create ring"
