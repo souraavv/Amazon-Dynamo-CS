@@ -1,19 +1,18 @@
-import rpyc 
-import subprocess
-import redis
-import copy 
 import os 
+import copy 
+import rpyc 
 import time 
-from os.path import join, dirname
+import redis
+import subprocess
 import subprocess as sp
-
-from HashRing import *
+ 
 from hashlib import md5
-from pexpect import pxssh
 from bisect import bisect
+from pexpect import pxssh
+from dotenv import load_dotenv
+from os.path import join, dirname
 from rpyc.utils.server import ThreadedServer
 from typing import List, Set, Dict, Tuple, Callable, Iterator, Union, Optional, Any, Counter
-from dotenv import load_dotenv
 
 '''
 nodes_conf: {hostname -> configuration}
@@ -27,7 +26,7 @@ resources : Handle by admin, to add a new resource in teh list
 
 class HashRing(rpyc.Service):
     def __init__(self, nodes_conf: List[Dict[str, Any]] = {}, **kwargs) -> None:
-        self.hash_function: Callable[[str], int] = (lambda key: int(md5(str(key).encode("utf-8")).hexdigest(), 16))
+        self.hash_function: Callable[[str], str] = (lambda key: int(md5(str(key).encode("utf-8")).hexdigest(), 16))
         self.ring: Dict[int, Set(Any, Any, Any)] = {} 
         self.default_vnodes: int = 2
         self.vnodes: int = kwargs.get("vnodes", self.default_vnodes)
@@ -113,7 +112,7 @@ class HashRing(rpyc.Service):
             conn._config['sync_request_timeout'] = None 
             conn.root.spawn_worker(node_conf["port"], node_conf["vnodes"])
         
-        time.sleep(20)
+        time.sleep(10) #TODO: put it to some constant
 
         for vnode_hash, vnode_info in go_to_ring.items():
             print ("hash", vnode_hash, len(self.ring))
@@ -208,9 +207,6 @@ class HashRing(rpyc.Service):
             return hostname
         return self.hosts[hostname][what]
         
-    # def locate_key(self, key:str) -> Any:
-    #     return self._get(key, 'instance')
-
     def get_host(self, key:str) -> str:
         return self._get(key, 'hostname')
 
