@@ -7,7 +7,7 @@ class SpawnWorkers(rpyc.Service):
         self.REDIS_PORT = 6379
     def exposed_spawn_worker(self, port, vnodes):
         for i in range(0, vnodes):
-            Popen(['python3', 'worker.py', str(port + i)], str(self.REDIS_PORT))
+            Popen(['python3', 'worker.py', str(port + i)])
         return "success"
  
 if __name__ == "__main__":
