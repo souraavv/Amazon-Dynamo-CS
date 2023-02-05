@@ -1,3 +1,4 @@
 pexpect==4.8.0
+python-dotenv==0.21.1
 redis==4.4.1
 rpyc==5.3.0

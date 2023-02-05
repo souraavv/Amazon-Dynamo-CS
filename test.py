@@ -1,15 +1,15 @@
-import time
-import redis
-import hashlib
-import threading
-import datetime
+# import time
+# import redis
+# import hashlib
+# import threading
+# import datetime
 import rpyc
 
-controller_url = ('localhost', 4500)
+controller_url = ('localhost', 4600)
 
-rds = redis.Redis(host='localhost')
-rds.incr('test')
-print(rds.get())
+res = rpyc.connect(*controller_url).root.test()
+print(f'rpc result = {res}')
+
 
 # class Test:
 # # create a new consistent hash ring with the nodes
