@@ -39,21 +39,20 @@ def test_put():
     url = ('localhost', 3000)
     conn = rpyc.connect
 
-def test_client_put():
+def test_client_put(key, value):
     url = ('localhost', 6001)
     conn = rpyc.connect(*url)
     conn._config['sync_request_timeout'] = None 
-    key, value = 'f', 5
     print (f'PUT REQUEST: For {key} = {value}')
     res = conn.root.put(key, value)
     print (f'PUT RESPONSE: {res}')
 
-def test_client_get():
+def test_client_get(key):
     url = ('localhost', 6001)
     conn = rpyc.connect(*url)
     conn._config['sync_request_timeout'] = None 
     
-    key = 'e'
+    
     print (f'GET REQUEST : For {key}')
     res = conn.root.get(key)
     print (f'GET REPONSE for key {key} = {res}')
@@ -71,9 +70,9 @@ if which == 1:
 if which == 2: 
     test_spawn_wokers()
 if which == 3:
-    test_client_put()
+    test_client_put('dafd;lkajfljadsljf', 323)
 if which == 4:
-    test_client_get()
+    test_client_get('dafd;lkajfljadsljf')
 # test_workers()
 
 

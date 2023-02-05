@@ -61,9 +61,9 @@ class Client(rpyc.Service):
         while True: 
             time.sleep(self.CACHE_TIMEOUT)
             stale_entries = []
-            curr_time = datetime.now()
+            curr_time = time.time()
             for node, vc in self.cache.items():
-                if timedelta.total_seconds(curr_time - self.cache[node].updated_time) > self.CACHE_TIMEOUT:
+                if curr_time - self.cache[node].updated_time > self.CACHE_TIMEOUT:
                     stale_entries.append(node)
             
             self.cache_lock.acquire()
@@ -94,18 +94,19 @@ class Client(rpyc.Service):
     '''
     def update_cache(self, key, replica_nodes, controller_node):
         print ("Updating cache...")
+        curr_time = time.time()
         self.locate_key[key] = controller_node 
         for node_hash, vc in replica_nodes.items():
             if node_hash in self.cache.keys():
                 self.cache_lock.acquire()
                 if self.cache[node_hash]["vector_clock"].version_number < vc.version_number: # update only version number is newest
-                    self.cache[node_hash] = {"vector_clock": vc, "updated_time": datetime.now()}
+                    self.cache[node_hash] = {"vector_clock": vc, "updated_time": curr_time}
                 self.cache_lock.release()
             else:     # if this is the fresh entry then simply update
                 self.cache_lock.acquire()
                 self.all_nodes.append(node_hash)
                 self.all_nodes.sort()
-                self.cache[node_hash] = {"vector_clock": vc, "updated_time": datetime.now()}
+                self.cache[node_hash] = {"vector_clock": vc, "updated_time": curr_time}
                 self.cache_lock.release()
         
         # print ("Updated Cache!", self.cache)
@@ -122,7 +123,6 @@ class Client(rpyc.Service):
                 conn = rpyc.connect(*url)
                 conn._config['sync_request_timeout'] = None 
                 replica_nodes, controller_node = conn.root.fetch_routing_info(key)
-                print (type(replica_nodes), )
                 replica_nodes = self.deserialize(pickle.loads(replica_nodes))
                 # print ("Recieved: ", replica_nodes)
                 self.update_cache(key, replica_nodes, controller_node)
@@ -141,13 +141,14 @@ class Client(rpyc.Service):
     '''
 
     def cache_is_stale(self, key) -> bool:
-        curr_time = datetime.now()
+
+        curr_time = time.time()
 
         if key not in self.locate_key:
             return True
         elif key in self.locate_key:
             controller_node = self.locate_key[key]
-            if timedelta.total_seconds(curr_time - self.cache[controller_node]['updated_time']) > self.CACHE_TIMEOUT:
+            if curr_time - self.cache[controller_node]['updated_time'] > self.CACHE_TIMEOUT:
                 return True 
         return False 
 
@@ -164,7 +165,7 @@ class Client(rpyc.Service):
         n = len(self.all_nodes)
         key_contained_by = []
         #* Since it is a ring, not a linear chain, we need to do %
-        for pos in range(0, min(len(self.all_nodes) ,self.READ)):
+        for pos in range(0, min(n ,self.READ)):
             key_contained_by.append(self.all_nodes[(controller_node_idx + pos) % n])
         return controller_node, key_contained_by
 
@@ -215,18 +216,16 @@ class Client(rpyc.Service):
     '''
     def exposed_put(self, key, value):
         print (f"PUT IS CALLED: {key}, {value}")
-        controller_node, key_contained_by = self.get_key_containing_nodes(key)
         retry_count:int = 0
         while retry_count < self.RETRIES:
+            controller_node, key_contained_by = self.get_key_containing_nodes(key)
             print (f"Retrying ... {retry_count + 1}" )
             retry_count += 1
             break_reason = ''
             res = None
             for node in key_contained_by:
-                # print (f" For node = {node}")
                 try:
                     vc = self.cache[node]["vector_clock"] 
-                    # print (f"Vector clock = {vc}")
                     url = (vc.ip, vc.port) 
                     print (f"URL = {url}")
                     conn = rpyc.connect(*url)
@@ -240,7 +239,7 @@ class Client(rpyc.Service):
                         break_reason = self.INVALID_RESOURCE
                         break
                 except Exception as e:
-                    print (e)
+                    print ("Expection in client put", e)
                     pass 
             if break_reason == self.INVALID_RESOURCE: 
                 self.update_cache(key, res["replica_nodes"], res["controller_node"])

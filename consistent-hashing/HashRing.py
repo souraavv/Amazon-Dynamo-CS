@@ -93,21 +93,20 @@ class HashRing(rpyc.Service):
     '''
 
     def get_neighbours(self, vnode_hash:str) -> Any:
-        print ("keys: ", self.keys)
         idx = bisect(self.keys, vnode_hash)
-        idx = 0 if idx == len(self.keys) else idx
+        idx = 0 if (idx == len(self.keys)) else idx
         return (idx - 1, idx)
 
     def create_ring(self, nodes_conf: List[Dict[str, Any]]) -> None:
         # TODO: first start all the nodes present in thfe conf
         # TODO store their hash keys and send the update to the get_host() 
         # node_Hash -> {hostname, virual name}
-        go_to_ring:Dict[str: set(str, str, str)] = {}
+        go_to_ring = {}
         for node_conf in nodes_conf:
             hostname = node_conf['hostname']
             port = node_conf['port']
-            for who in range(0, node_conf["vnodes"]):
-                go_to_ring[self.give_hash(f'{hostname}_{who}')] = (hostname, port, who)
+            for who in range(0, int(node_conf["vnodes"])):
+                go_to_ring[self.give_hash(f'{hostname}_{who}')] = (hostname, port + who, who)
             conn = rpyc.connect(hostname, self.SPAWN_WORKER_PORT)
             conn._config['sync_request_timeout'] = None 
             conn.root.spawn_worker(node_conf["port"], node_conf["vnodes"])
@@ -115,30 +114,29 @@ class HashRing(rpyc.Service):
         time.sleep(10) #TODO: put it to some constant
 
         for vnode_hash, vnode_info in go_to_ring.items():
-            print ("hash", vnode_hash, len(self.ring))
             # right and left are considered assuming clockwise movement
             # and back of head is always facing center while moving
             hostname, port, who = vnode_info
             left_idx, right_idx = self.get_neighbours(vnode_hash)
-            print (left_idx, right_idx)
+            # print (left_idx, right_idx)
             only_single_node:bool = True
             
             left_node_hash, right_node_hash =  vnode_hash, -1
-            if len(self.ring):
+            if len(self.ring) > 0:
                 left_node_hash, right_node_hash = self.keys[left_idx], self.keys[right_idx]
                 only_single_node = False 
 
-            print (left_node_hash, right_node_hash, only_single_node)
+            # print (left_node_hash, right_node_hash, only_single_node)
             new_added = {
                 "start_of_range": str(int(left_node_hash) + 1),
                 "ip": hostname,
-                "port": port + who,
+                "port": port,
                 "version_number": 0,
                 "load": 0,
                 "end_of_range": str(vnode_hash) 
             }
 
-            print(new_added)
+            # print("Response ", new_added["start_of_range"], new_added["ip"], new_added["port"])
             # TODO: rpc call 1 to the newly added node
             response_to_new_node = {
                             "new_start": str(int(left_node_hash) + 1),
@@ -146,27 +144,41 @@ class HashRing(rpyc.Service):
                             "new_added": new_added
                         }
 
-            self_url = (hostname, port + who)
-            print (*self_url)
-            conn = rpyc.connect(*self_url) 
-            conn._config['sync_request_timeout'] = None 
-            conn.root.init_table(response_to_new_node)
-            # TODO: rpc call 2 to the right node
-            if only_single_node == False:
-                response_to_right_node = {
-                                "new_start": str(int(vnode_hash) + 1),
-                                "new_end": str(right_node_hash),
-                                "new_added": new_added
-                            }
-                right_ip, right_port, _ = self.ring[self.keys[right_idx]]
-                right_url = (right_ip, right_port)
-                conn = rpyc.connect(*right_url) 
+            # print ("responsed_to_new_node = ", response_to_new_node)
+            
+            print ("----"*5)
+            print (f" New: [{int(new_added['start_of_range']) % 1000}, {int(new_added['end_of_range']) % 1000 }, ip:port({new_added['ip']}, {new_added['port']})]")
+            
+            self_url = (hostname, port)
+            try:
+                conn = rpyc.connect(*self_url) 
                 conn._config['sync_request_timeout'] = None 
-                conn.root.update_table(response_to_right_node)
+                conn.root.init_table(response_to_new_node)
+                # TODO: rpc call 2 to the right node
+                if only_single_node == False:
+                    response_to_right_node = {
+                                    "new_start": str(int(vnode_hash) + 1),
+                                    "new_end": str(right_node_hash),
+                                    "new_added": new_added
+                                }
+                
+                    if response_to_right_node["new_start"] == response_to_new_node["new_start"]:
+                        print ("--------------  They are same ------------------")
+                    right_ip, right_port, _ = self.ring[self.keys[right_idx]]
+                    print (f" Already: [{int(response_to_right_node['new_start']) % 1000 }, {int(response_to_right_node['new_end']) % 1000}, ip:port({right_ip}, {right_port})]")
+                    print (self.keys[right_idx])
+                    right_url = (right_ip, right_port)
+                    conn = rpyc.connect(*right_url) 
+                    conn._config['sync_request_timeout'] = None 
+                    conn.root.update_table(response_to_right_node)
+            except Exception as e:
+                print ("Some thing bad happend in ring ", e)
             # add to ring
             self.ring[vnode_hash] = vnode_info
             #sort the keys
             self.keys = sorted(self.ring.keys())
+            print ("----"*5)
+            
         
         self.keys = sorted(self.ring.keys())
 
@@ -240,16 +252,6 @@ class HashRing(rpyc.Service):
         # can ask each node there load, and may be the nodes with less load can be reomved
         pass
 
-    # API for get/put
-    # def exposed_put(self, key, value):
-    #     self.locate_key(key).set(key, value)
-    #     return {"status": 0, "msg": "success"}
-
-    # def exposed_get(self, key):
-    #     ret:Any = self.locate_key(key).get(key)
-    #     return {"status": 0, "msg": "success", "output": ret}
-
-    # api : add_resource
 nodes = [
         {
             'username': 'sourav',
