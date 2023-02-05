@@ -148,7 +148,7 @@ class Hashring(rpyc.Service):
     '''
     def create_ring(self, nodes):
         # keep the hashes of the newly added nodes in temporary list
-        hashes = []
+        # hashes = []
         hash_to_vnode = dict()
         # spawn the processes on each of the nodes first
         print(f'nodes = {nodes}')
@@ -158,7 +158,7 @@ class Hashring(rpyc.Service):
             for vid in range(0, self.VNODES_COUNT):
                 port = initial_port + vid
                 node_hash = self.hash(hostname + '_' + str(port))
-                hashes.append(node_hash)
+                # hashes.append(node_hash)
                 hash_to_vnode[node_hash] = (hostname, port, vid)
             print(f'hostname: {hostname}, port: {self.SPAWNING_PROC_PORT}')
             rpyc.connect(hostname, self.SPAWNING_PROC_PORT, config={"sync_request_timeout": 2400}).root.spawn_worker(self.VNODES_COUNT, initial_port)

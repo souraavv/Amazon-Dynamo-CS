@@ -51,9 +51,9 @@ arg = int(sys.argv[1])
 if arg == 1:
     test_spawn_wokers()
 elif arg == 2:
-    res = test_put('sfdf', 'done')
+    res = test_put('check', 'done')
 elif arg == 3:
-    res = test_get('sfdf')
+    res = test_get('check')
 
 # test_put('test2', 'done2')
 # test_get('test2')
