@@ -58,12 +58,13 @@ class Worker(rpyc.Service):
         self.PING_DOWN_NODE_INTERVAL:int = 30
         self.REPLICATED_TIMEOUT:int = 20
         self.REPLICA_RETRY = 2
-        self.READ:int = 3 # Take it as config from client
+        self.READ:int = 2 # Take it as config from client
         self.WRITE:int = 2 # Take it as config from client
         self.REDIS_WRITE_RETRY:int = 3 # to retry on watch error
         self.REDIS_PORT:int = redis_port 
-        self.N = self.READ + self.WRITE + 1 # set it properly
+        self.N = self.READ + self.WRITE# set it properly
         self.hashmap = f'hash-map-{port}'
+        self.sorted_set = f'sorted-set-{port}' # this is over the keys of hashmap so that efficient search can be made O(logN + m)
         self.FORMAT = "%Y-%m-%d %H:%M:%S"
         '''
         Locks
@@ -115,12 +116,105 @@ class Worker(rpyc.Service):
             serialized_routing_table[hash] = vc.to_dict()
         return serialized_routing_table
 
-    # This function will fetch the keys from next 'x' nodes
-    def fetch_keys(self):
-        #TODO: Reconsillation
-        pass 
+    # This function will fetch for which it is now the new primary
+    # Since it is added fresh now.
+    
+    '''
+    This function will be called by new node which will ask for fetching
+    the key:value from the neighbour nodes
+    '''
+    def exposed_giveback_keys(self, start_range, end_range):
+        try:
+            print ("Exposed giveaway keys called")
+            res = self.rds.zrangebylex(self.sorted_set, '['+start_range, '['+ end_range)
+            print (f"ZRANGEBYLEX: {res}")
+            keys_value = dict()
+            keys_timestamp = dict() 
+            print ("fetched", res)
+            for key in res:
+                key = str(self.rds.get(str(key)))
+                keys_value[key] = self.rds.hget(self.hashmap, key)
+                keys_timestamp[key] = self.rds.get(key)
+            return {
+                    "status": self.SUCCESS, 
+                    "keys_value": keys_value, 
+                    "keys_timestamp": keys_timestamp
+            } 
 
-    def exposed_init_table(self, routing_info):
+        except Exception as e:
+            print (f"Something bad happen in giveback keys...{e}")
+            return {
+                "status": self.FAILURE,
+                "message": e
+            }
+
+    '''
+    Since this is the new node added to the hashring, its first duty 
+    is to fetch the keys which it owns and thus It will talk to 
+    old primary and secondaries.
+    '''
+    def fetch_and_store_keys(self, primary, replica_nodes):
+        print ("Fetching is called...")
+        next_nodes = []
+        if primary == -1:
+            print ("First ever node in the ring...")
+            return 
+        next_nodes.append(primary)
+        next_nodes.extend(replica_nodes)
+        print (f'all nodes: ', next_nodes)
+        for node in next_nodes:
+            max_retry, fetching_done = 3, False
+            while max_retry > 0:
+                try:
+                    ''' First try to make a contact with primary'''
+                    hostname, port, _ = node
+                    url = (hostname, port)
+                    print (f'Fetching from {hostname}, {port}')
+                    conn = rpyc.connect(*url) 
+                    conn._config['sync_request_timeout'] = None         
+                    ''' Get the data from the old primary '''
+                    res = conn.root.giveback_keys(self.start_of_range, self.end_of_range)
+                    print (f"Response: {res}")
+                    if res['status'] == self.SUCCESS:
+                        ''' Setup the data to the redis '''
+                        keys = res['keys_value']
+                        keys_timestamp = res['key_timestamp']
+                        print (f"Fetching keys..\nAll keys fetched: {keys}")
+                        with self.rds.pipeline() as pipe:
+                            pipe.watch(self.hashmap)
+                            pipe.watch(self.sorted_set)
+                            pipe.multi()
+                            while True:
+                                try:
+                                    for key, value in keys.items():
+                                        key_hash = str(self.hash_function(key))
+                                        pipe.hset(self.hashmap, key, value)
+                                        pipe.zadd(self.sorted_set, {key_hash: 1})
+                                        pipe.set(key_hash, key)
+
+                                    for key, value in keys_timestamp.items():
+                                        pipe.set(key, value)
+                                    print ("Succefully bring all the keys")
+                                    pipe.execute()
+                                    break
+                                except redis.WatchError as e:
+                                    print ("Watch error: ", e)
+                                    continue
+                    else:
+                        print ("Didn't succeed")
+                        print (res)
+
+                    fetching_done = True
+                    break
+                except Exception as e:
+                    max_retry -= 1
+                    continue
+
+            if fetching_done:
+                break
+        
+
+    def exposed_init_table(self, routing_info, primary, replica_nodes):
         print ("New beginning")
         new_added = routing_info['new_added']
         self.routing_table[str(new_added['end_of_range'])] = VectorClock(ip=new_added['ip'],
@@ -128,7 +222,8 @@ class Worker(rpyc.Service):
         load=new_added["load"], start_of_range=new_added["start_of_range"]) 
         self.start_of_range = new_added['start_of_range']
         self.end_of_range = new_added['end_of_range']
-        self.fetch_keys() 
+        self.fetch_and_store_keys(primary, replica_nodes) 
+        
         # self.print_routing_table()
 
     def exposed_update_table(self, routing_info:Dict[Any, Any]):
@@ -224,7 +319,6 @@ class Worker(rpyc.Service):
                 url = (node.ip, node.port)
                 if (node.ip == self.ip) and (node.port == self.port): # Can't gossip with self, need a friend
                     continue
-                
                 ask_guest_to_ping = list()
                 try:
                     conn = rpyc.connect(*url) 
@@ -290,7 +384,7 @@ class Worker(rpyc.Service):
         '''
         for node in ask_guest_to_ping:
             if node in self.routing_table.keys():
-                version_number = self.routing_table[node].vesion_number
+                version_number = self.routing_table[node].version_number
                 if (version_number < down_routing_table[node].version_number):
                     need_to_ping.add(node)
                     no_need_to_ask_guest.add(node) 
@@ -409,9 +503,10 @@ class Worker(rpyc.Service):
         node = self.end_of_range
         # self.rds.set_response_callback('GET', float)
         print ("TYPE OF SELF.RDS.GET(key): ", type(self.rds.get(key)))
-
+        key_hash = str(self.hash_function(key))
+        
         if (type(self.rds.get(key) == None)):
-            print ("BEKAR CODE First time run-----------------------")
+            # print ("BEKAR CODE First time run-----------------------")
             stored_timestamp = timestamp
         else:
             stored_timestamp = float(self.rds.get(key))
@@ -423,19 +518,18 @@ class Worker(rpyc.Service):
         retry_count:int = self.REDIS_WRITE_RETRY
         with self.rds.pipeline() as pipe:
             pipe.watch(self.hashmap)
+            pipe.watch(self.sorted_set)
             while True:
-                if retry_count == 0:
-                    print ("Failure in replication..:(")
-                    return {"status": self.FAILURE, "msg": "Cannot update the redis of replica"}
                 try:
                     pipe.multi()
                     pipe.hset(self.hashmap, key, value)
+                    pipe.zadd(self.sorted_set, {key_hash: 1})
                     pipe.set(key, timestamp)
+                    pipe.set(key_hash, key)
                     pipe.execute()
                     break 
                 except redis.WatchError:
                     print ("Some Redis watch error...")
-                    retry_count -= 1
                     continue
         print ("Replcation done..")
         return {"status": self.SUCCESS, "request_id": request_id, "node": node, "msg": "Success"}
@@ -653,16 +747,18 @@ class Worker(rpyc.Service):
             
             with self.rds.pipeline() as pipe:
                 pipe.watch(self.hashmap)
+                pipe.watch(self.sorted_set)
                 while True:
                     try:
                         pipe.multi()
                         pipe.hset(self.hashmap, key, value)
+                        pipe.zadd(self.sorted_set, {key_hash: 1})
                         pipe.set(key, timestamp)
+                        pipe.set(key_hash, key)
                         pipe.execute()
                         break 
                     except redis.WatchError as e:
                         print ("Watch error: ", e)
-
                         continue
             #* controller node is not always the first node.(May be I'm a programmer)
             print ("Done writing to redis")

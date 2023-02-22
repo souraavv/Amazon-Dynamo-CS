@@ -33,6 +33,7 @@ class HashRing(rpyc.Service):
         self.hosts: Dict[str, Dict[str, Any]] = {}
         self.keys: List[str] = []
         self.resources: List[Dict[str, Any]] = nodes_conf 
+        self.N = 4
         # self.make_setup_ready()
         self.SPAWN_WORKER_PORT = 4001
 
@@ -153,7 +154,16 @@ class HashRing(rpyc.Service):
             try:
                 conn = rpyc.connect(*self_url) 
                 conn._config['sync_request_timeout'] = None 
-                conn.root.init_table(response_to_new_node)
+                primary, replica_nodes = -1, []
+                if only_single_node == False:
+                    primary = self.ring[right_node_hash]
+                    for i in range(min(len(self.ring), self.N)):
+                        node_idx = (i + right_idx + 1) % (len(self.ring))
+                        secondary = self.ring[self.keys[node_idx]]
+                        if primary != secondary:
+                            replica_nodes.append(secondary)
+
+                conn.root.init_table(routing_info=response_to_new_node, primary=primary, replica_nodes=replica_nodes)
                 # TODO: rpc call 2 to the right node
                 if only_single_node == False:
                     response_to_right_node = {

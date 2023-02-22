@@ -1,11 +1,16 @@
 import redis 
 import uuid
 import rpyc
+import string
 import sys
 import time
-from random import choice
-from string import ascii_uppercase, ascii_lowercase
+from random import choice, randint
 from collections import Counter
+
+def get_random_string(length):
+    letters = string.ascii_lowercase
+    result_str = ''.join(choice(letters) for i in range(length))
+    return result_str 
 
 def test_hashring():
     url = ('localhost', 3000)
@@ -28,11 +33,11 @@ def test_hashring():
         print (f'All nodes: {val}')
 
 
-def test_spawn_wokers():
+def test_spawn_wokers(nodes):
     url = ('localhost', 3000)
     conn = rpyc.connect(*url)
     conn._config['sync_request_timeout'] = None 
-    res = conn.root.allocate_nodes(2)
+    res = conn.root.allocate_nodes(nodes)
     print (res)
     
 def test_put():
@@ -68,11 +73,15 @@ which = int(sys.argv[1])
 if which == 1:
     test_hashring() #DONE
 if which == 2: 
-    test_spawn_wokers()
+    nodes = int(sys.argv[2])
+    test_spawn_wokers(nodes)
 if which == 3:
-    test_client_put('dafd;lkajfljadsljf', 323)
+    for i in range(0, 50):
+        s = get_random_string(25)
+        test_client_put(s, randint(1, 10))
+
 if which == 4:
-    test_client_get('dafd;lkajfljadsljf')
+    test_client_get('yepdt')
 # test_workers()
 
 
