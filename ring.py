@@ -48,6 +48,7 @@ class Hashring(rpyc.Service):
         self.ring = dict()
         #* keys: hashes of the nodes arranged in sorted manner denoting the positions in the ring
         self.keys = []
+        self.N = 4
         #! check if needed vnodes count
         self.VNODES_COUNT = 4
 
@@ -166,12 +167,23 @@ class Hashring(rpyc.Service):
         time.sleep(20)
         for hash, (hostname, port, vid) in hash_to_vnode.items():
             # get the next node and the previous node and make rpc call to update its routing table
-            next_node = None
+            next_node_config = None
+            replica_nodes = []
             prev_node_hash = hash
             if len(self.ring) > 0:
                 pos_next_node = self.get_neighbour_nodes(hash)
-                next_node = self.ring[self.keys[pos_next_node]]
+                next_node_config = self.ring[self.keys[pos_next_node]]
                 prev_node_hash = self.keys[pos_next_node - 1]
+
+                # fetching the replica nodes to send to the newly added node
+                for i in range(min(len(self.ring), self.N)):
+                    pos = (pos_next_node + i + 1) % len(self.ring)
+                    secondary = self.ring[self.keys[pos]]
+                    if next_node_config != secondary:
+                        replica_nodes.append(secondary)
+                    pass
+
+            
             current_node_config = {
                 "hostname": hostname,
                 "port": port,
@@ -183,13 +195,13 @@ class Hashring(rpyc.Service):
             # Send the current node's config and it's own updated start range to the node next after the new added one
             # If the current node is first in the ring, there is no next node, so ignore
             if len(self.ring) > 0:
-                next_node_conn = rpyc.connect(next_node['hostname'], next_node['port'])
+                next_node_conn = rpyc.connect(next_node_config['hostname'], next_node_config['port'])
                 next_node_conn._config['sync_request_timeout'] = None
                 next_node_conn.root.update_routing_table(current_node_config)
             print(f"Initialize self key ranges, hostname: {hostname}, port: {port}")
             # Send the start range of it's own to the new added node
-            curr_node_conn = rpyc.connect(hostname, port, config={"sync_request_timeout": None})
-            curr_node_conn.root.init_self_key_range(current_node_config)
+            curr_node_conn = rpyc.connect(hostname, port, config = {"sync_request_timeout": None})
+            curr_node_conn.root.init_self_key_range(current_node_config, next_node_config = next_node_config, replica_nodes = replica_nodes)
             curr_node_conn._config['sync_request_timeout'] = None
             self.ring[hash] = current_node_config
             self.keys = sorted(self.ring.keys())

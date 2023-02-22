@@ -1,5 +1,7 @@
 import sys
 import rpyc
+import string
+from random import choice, randint
 
 client_url = ('localhost', 6001)
 
@@ -23,12 +25,17 @@ def test_createNodes():
         # val = rpyc.connect(*url).root.get_all_node_location()
         # print (f'All nodes: {val}')
 
+def get_random_string(length):
+    letters = string.ascii_lowercase
+    result_str = ''.join(choice(letters) for _ in range(length))
+    return result_str
 
-def test_spawn_wokers():
+
+def test_spawn_wokers(num_workers):
     url = ('localhost', 3000)
     conn = rpyc.connect(*url)
     conn._config['sync_request_timeout'] = None 
-    res = conn.root.add_nodes_to_ring(2)
+    res = conn.root.add_nodes_to_ring(num_workers)
     print (res)
     
 def test_put(key, value):
@@ -47,13 +54,18 @@ def test_get(key):
 #     conn = rpyc.connect(*url).root
 #     res = conn.get()
 
-arg = int(sys.argv[1])    
-if arg == 1:
-    test_spawn_wokers()
-elif arg == 2:
-    res = test_put('check', 'done')
-elif arg == 3:
-    res = test_get('check')
+type = int(sys.argv[1])
+if type == 1:
+    num_workers = int(sys.argv[2])
+    test_spawn_wokers(num_workers)
+elif type == 2:
+    for _ in range(50):
+        key = get_random_string(10)
+        value = randint(1, 10)
+        res = test_put(key, value)
+elif type == 3:
+    key = sys.argv[2]
+    res = test_get(key)
 
 # test_put('test2', 'done2')
 # test_get('test2')

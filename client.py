@@ -4,7 +4,6 @@ import pickle
 import random
 import threading
 from bisect import bisect
-from datetime import timedelta, datetime
 from rpyc.utils.server import ThreadedServer
 
 class VectorClock:
@@ -146,11 +145,11 @@ class Client(rpyc.Service):
             for node_hash in key_contained_by:
                 try:
                     node_vc = self.worker_nodes_cache[node_hash]['vector_clock']
-                    print(f'Sending get request to {node_vc.hostname}: {node_vc.port}')
+                    # print(f'Sending get request to {node_vc.hostname}: {node_vc.port}')
                     res = rpyc.connect(node_vc.hostname, node_vc.port).root.get(key)
                     print(f'Received response: {res}')
                     if res['status'] == self.SUCCESS_STATUS:
-                        print(f'received success response')
+                        # print(f'received success response')
                         return {"status": self.SUCCESS_STATUS, "value": res['value']}
                     elif res['status'] == self.INVALID_RESOURCE:
                         break_reason = 'invalid_resource'
@@ -169,6 +168,7 @@ class Client(rpyc.Service):
     def exposed_put(self, key, value):
         # print('-------------------------------Put request--------------------------------------------------')
         # print(f'Obtained nodes for key: {key_contained_by}')
+        print(f'key = {key}, type = {type(key)}')
         retry_count = 0
         while retry_count < self.RETRIES:
             key_contained_by = self.get_nodes_holding_key(key)
