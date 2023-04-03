@@ -25,7 +25,7 @@ resources : Handle by admin, to add a new resource in teh list
 '''
 
 class HashRing(rpyc.Service):
-    def __init__(self, nodes_conf: List[Dict[str, Any]] = {}, **kwargs) -> None:
+    def __init__(self, nodes_conf: List[Dict[str, Any]], spawn_whom:str, **kwargs) -> None:
         self.hash_function: Callable[[str], str] = (lambda key: int(md5(str(key).encode("utf-8")).hexdigest(), 16))
         self.ring: Dict[int, Set(Any, Any, Any)] = {} 
         self.default_vnodes: int = 2
@@ -33,6 +33,7 @@ class HashRing(rpyc.Service):
         self.hosts: Dict[str, Dict[str, Any]] = {}
         self.keys: List[str] = []
         self.resources: List[Dict[str, Any]] = nodes_conf 
+        self.spawn_whom = spawn_whom
         self.N = 4
         # self.make_setup_ready()
         self.SPAWN_WORKER_PORT = 4001
@@ -108,9 +109,10 @@ class HashRing(rpyc.Service):
             port = node_conf['port']
             for who in range(0, int(node_conf["vnodes"])):
                 go_to_ring[self.give_hash(f'{hostname}_{who}')] = (hostname, port + who, who)
+            
             conn = rpyc.connect(hostname, self.SPAWN_WORKER_PORT)
             conn._config['sync_request_timeout'] = None 
-            conn.root.spawn_worker(node_conf["port"], node_conf["vnodes"])
+            conn.root.spawn_worker(port=node_conf["port"], vnodes=node_conf["vnodes"], spawn_whom=self.spawn_whom)
         
         time.sleep(10) #TODO: put it to some constant
 
@@ -119,7 +121,6 @@ class HashRing(rpyc.Service):
             # and back of head is always facing center while moving
             hostname, port, who = vnode_info
             left_idx, right_idx = self.get_neighbours(vnode_hash)
-            # print (left_idx, right_idx)
             only_single_node:bool = True
             
             left_node_hash, right_node_hash =  vnode_hash, -1
@@ -127,7 +128,6 @@ class HashRing(rpyc.Service):
                 left_node_hash, right_node_hash = self.keys[left_idx], self.keys[right_idx]
                 only_single_node = False 
 
-            # print (left_node_hash, right_node_hash, only_single_node)
             new_added = {
                 "start_of_range": str(int(left_node_hash) + 1),
                 "ip": hostname,
@@ -137,19 +137,14 @@ class HashRing(rpyc.Service):
                 "end_of_range": str(vnode_hash) 
             }
 
-            # print("Response ", new_added["start_of_range"], new_added["ip"], new_added["port"])
-            # TODO: rpc call 1 to the newly added node
             response_to_new_node = {
                             "new_start": str(int(left_node_hash) + 1),
                             "new_end": str(vnode_hash),
                             "new_added": new_added
                         }
 
-            # print ("responsed_to_new_node = ", response_to_new_node)
-            
             print ("----"*5)
-            print (f" New: [{int(new_added['start_of_range']) % 1000}, {int(new_added['end_of_range']) % 1000 }, ip:port({new_added['ip']}, {new_added['port']})]")
-            
+            print (f" New: [{int(new_added['start_of_range']) % 10000}, {int(new_added['end_of_range']) % 10000 }, ip:port({new_added['ip']}, {new_added['port']})]")
             self_url = (hostname, port)
             try:
                 conn = rpyc.connect(*self_url) 
@@ -164,7 +159,6 @@ class HashRing(rpyc.Service):
                             replica_nodes.append(secondary)
 
                 conn.root.init_table(routing_info=response_to_new_node, primary=primary, replica_nodes=replica_nodes)
-                # TODO: rpc call 2 to the right node
                 if only_single_node == False:
                     response_to_right_node = {
                                     "new_start": str(int(vnode_hash) + 1),
@@ -183,13 +177,9 @@ class HashRing(rpyc.Service):
                     conn.root.update_table(response_to_right_node)
             except Exception as e:
                 print ("Some thing bad happend in ring ", e)
-            # add to ring
-            self.ring[vnode_hash] = vnode_info
-            #sort the keys
-            self.keys = sorted(self.ring.keys())
+            self.ring[vnode_hash] = vnode_info #add to ring
+            self.keys = sorted(self.ring.keys()) #sort the keys
             print ("----"*5)
-            
-        
         self.keys = sorted(self.ring.keys())
 
     '''
@@ -262,22 +252,28 @@ class HashRing(rpyc.Service):
         # can ask each node there load, and may be the nodes with less load can be reomved
         pass
 
-nodes = [
+
+if __name__ == '__main__':
+    types_of_workers:list = ['syntactic', 'semantic']
+    spawn_whom:str = types_of_workers[1]
+    
+    print (f"Nodes will be spawn for {spawn_whom} workers")
+    workers_port:int = 3100 if spawn_whom == 'semantic' else 3000
+    print (f"Spwan_whom = {spawn_whom}, Worker_port: {workers_port}")
+    nodes = [
         {
             'username': 'sourav',
             'hostname': '10.237.27.95',
-            'port': 3000,
-            'vnodes': 4
+            'port': workers_port,
+            'vnodes': 6
         },
         {
             'username': 'baadalvm',
             'hostname': '10.17.50.254',
-            'port': 3000,
-            'vnodes': 4
+            'port': workers_port,
+            'vnodes': 6
         }
-]
-
-if __name__ == '__main__':
-    print ("starting listening on port 3000...")
-    port = 3000
-    ThreadedServer(HashRing(nodes), hostname='0.0.0.0', port=port).start()
+    ]
+    HashRing_port:int = 3000
+    print (f"Hashring started listening on port {HashRing_port}...")
+    ThreadedServer(HashRing(nodes, spawn_whom), hostname='0.0.0.0', port=HashRing_port).start()
