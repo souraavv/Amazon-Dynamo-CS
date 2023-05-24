@@ -259,7 +259,7 @@ if __name__ == '__main__':
     
     print (f"Nodes will be spawn for {spawn_whom} workers")
     workers_port:int = 3100 if spawn_whom == 'semantic' else 3000
-    print (f"Spwan_whom = {spawn_whom}, Worker_port: {workers_port}")
+    print (f"Workers will be spawn for {spawn_whom}, Worker port: {workers_port}")
     nodes = [
         {
             'username': 'sourav',

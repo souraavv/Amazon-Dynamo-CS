@@ -1,5 +1,6 @@
 import rpyc
 import string
+from network_partition import heal_firewall, block_traffic
 from random import choice, randint
 import time 
 
@@ -47,9 +48,7 @@ def test_semantic_put(key: str) -> None:
     conn: rpyc.Connection = rpyc.connect(*url)
     print(f"Semantic put:: key: {key}")
     conn._config['sync_request_timeout'] = None 
-    # value: str = input('Add/Remove (+/-)')
-    # value = '+' if randint(0, 1) == 1  else '-'
-    value = '+'
+    value: str = input('Add/Remove (+/-)')
     if value == '+':
         res: str = conn.root.put(key, 1)
         print(f'PUT RESPONSE: {res}')
@@ -72,15 +71,24 @@ def test_workers() -> None:
     conn: rpyc.Connection = rpyc.connect(*url).root
     res: str = conn.get()
 
+ports = [3100, 3101, 3101, 3103, 3104, 3105]
+
+
 while True: 
     print (
-    f'''Go with one of the option
+    f'''\n
+    =========================================
+    Go with one of the option
     1. Testing hashring
     2. Test spawn workers
     3. Test Client put for syntactic
     4. Test Client get form syntatic
     5. Semantic Put
     6. Semantic Read
+    -------------------
+    7. Network PARTITION
+    8. Network HEAL
+    =========================================
     ''')
     try:
         option: int = int(input('Which option ? '))
@@ -97,15 +105,27 @@ while True:
         elif option == 5:
             hold_key: list = list()
             # for _ in range(0, 5):
-            #     key: str = get_random_string(5)
+            #     key: str = get_random_string(25)
             #     hold_key.append(key)
-            key = 'jakkldjaflkdjfkjkldajflkd'
+            key = 'rqdgq'
             test_semantic_put(key)
             # for key in hold_key:
             
         elif option == 6:
-            key: str = 'jakkldjaflkdjfkjkldajflkd'
+            key: str = 'rqdgq'
             test_semantic_get(key)
+        elif option == 7:
+            node1_ip = '10.237.27.95'
+            node2_ip = '10.17.50.254'
+            select_ip = int(input('Which node sourav(1)/baadalvm(2): '))
+            select_ip = node1_ip if select_ip == 1 else node2_ip
+            block_traffic(select_ip, ports)
+        elif option == 8:
+            node1_ip = '10.237.27.95'
+            node2_ip = '10.17.50.254'
+            select_ip = int(input('Which node sourav(1)/baadalvm(2): '))
+            select_ip = node1_ip if select_ip == 1 else node2_ip
+            heal_firewall(select_ip, ports)            
         else:
             break
     except Exception as e: 

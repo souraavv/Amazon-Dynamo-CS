@@ -18,16 +18,19 @@ def heal_firewall(ip_address, port_set):
         
         subprocess.run([heal_command], shell=True) # Update with password
     print("The network partition is healed")
-    
 
-print (f'1. Network partition')
-print (f'2. Heal partition')
 
-which = int(input('Which option ? '))
-which_node = int(input('which nodes cluster (node1, node2) ? '))
-ip = '10.237.27.95' if which_node == 1 else '10.17.50.254'
+if __name__ == '__main__':
+    print (f'1. Network partition')
+    print (f'2. Heal partition')
 
-if which == 1:
-    block_traffic(ip, [3100, 3101, 3102, 3103, 3104, 3105])
-elif which == 2:
-    heal_firewall(ip, [3100, 3101, 3102, 3103, 3104, 3105])
+    which = int(input('Which option ? '))
+    which_node = int(input('which nodes cluster (node1, node2) ? '))
+    ip = '10.237.27.95' if which_node == 1 else '10.17.50.254'
+
+    # vnodes = [3100, 3103, 3105]
+    vnodes = [3100, 3101, 3102, 3103, 3104, 3105]
+    if which == 1:
+        block_traffic(ip, vnodes)
+    elif which == 2:
+        heal_firewall(ip, vnodes)

@@ -1,13 +1,14 @@
 import os 
 import rpyc
+import math 
+import time
 import pickle
 import random
 import threading
-import math 
-import time
 
 from typing  import Dict
 from bisect import bisect
+from pprint import pprint
 from datetime import timedelta, datetime
 from rpyc.utils.server import ThreadedServer
 
@@ -38,9 +39,10 @@ class Client(rpyc.Service):
         
         self.all_nodes = []#* node hash -> (vector clock(ip, port, ...), last_update_time)
         ''' Universal constant/configure by users'''
-        self.CACHE_TIMEOUT = 20
+        self.CACHE_TIMEOUT = 15
         self.READ = 3
         self.WRITE = 2
+        self.N = self.READ + self.WRITE - 1
         self.HINTED_REPLICA_COUNT = 2
         self.RETRIES = 3 # can be replaced with log(nodes) in system
         ''' Some constants for return messages'''
@@ -122,14 +124,14 @@ class Client(rpyc.Service):
                 #!FIXME: don't iterate on nodes
                 url = (self.nodes[node]["ip"], int(self.nodes[node]["port"]) + who)
                 conn = rpyc.connect(*url)
-                conn._config['sync_request_timeout'] = None 
+                conn._config['sync_request_timeout'] = 15
                 replica_nodes, controller_node = conn.root.fetch_routing_info(key)
                 replica_nodes = self.deserialize(pickle.loads(replica_nodes))
                 # print ("Recieved: ", replica_nodes)
                 self.update_cache(key, replica_nodes, controller_node)
                 break
             except Exception as e:
-                print (f"Some thing bad happened while fetching routing info...", e)
+                print (f"Some thing bad happened while fetching routing info...{e}")
                 continue
         
 
@@ -162,12 +164,21 @@ class Client(rpyc.Service):
         controller_node_idx = bisect(self.all_nodes, controller_node)
         controller_node_idx = controller_node_idx - 1 if controller_node_idx else 0 
         n = len(self.all_nodes)
+        print (f'Len = {n} and self.N = {self.N}')
         key_contained_by = []
         #* Since it is a ring, not a linear chain, we need to do %
-        for pos in range(0, min(n ,self.READ)):
+        for pos in range(0, min(n, self.N)):
             key_contained_by.append(self.all_nodes[(controller_node_idx + pos) % n])
         return controller_node, key_contained_by
 
+
+    def getNodes(self, key_contained_by):
+        for node in key_contained_by:
+            try:
+                vc = self.cache[node]['vector_clock'] 
+                print (f' IP = {vc.ip} and PORT = {vc.port}')
+            except:
+                print ("Can't fetch")
 
     '''
         Make this function really abstracted
@@ -180,7 +191,7 @@ class Client(rpyc.Service):
         retry_count:int = 0
         while retry_count < self.RETRIES:
             print (f"Retrying ... {retry_count + 1}" )
-            
+            self.getNodes(key_contained_by)            
             retry_count += 1
             break_reason = ''
             res = None
@@ -190,15 +201,19 @@ class Client(rpyc.Service):
                     vc = self.cache[node]['vector_clock'] 
                     url = (vc.ip, vc.port) 
                     conn = rpyc.connect(*url)
-                    conn._config['sync_request_timeout'] = None
+                    print (f'=================')
+                    pprint (f"IP : {vc.ip} and PORT: {vc.port}")
+                    print (f'=================')
+                    conn._config['sync_request_timeout'] = 5
                     res = conn.root.exposed_get(key, allow_replicas)
-                    print (f"Response : {res['status']}")
-                    if res['status'] == self.SUCCESS: 
+                    # print (f"Response : {res['status']}")
+                    print (f'Response : {res}')
+                    if res and (res['status'] == self.SUCCESS): 
                         print (f"Read successfully: {res['value']}")
                         return {"status": self.SUCCESS, "value": res['value']}
-                    elif res['status'] == self.INVALID_RESOURCE: 
+                    elif res and (res['status'] == self.INVALID_RESOURCE): 
                         break_reason = self.INVALID_RESOURCE
-                        break
+                        # break
                 except Exception as e:
                     print ("Some thing bad happen in get ", e)
                     pass 
@@ -219,18 +234,23 @@ class Client(rpyc.Service):
         while retry_count < self.RETRIES:
             controller_node, key_contained_by = self.get_key_containing_nodes(key)
             print (f"Retrying ... {retry_count + 1}" )
+            self.getNodes(key_contained_by)            
+            
             retry_count += 1
             break_reason = ''
             res = None
+
             for node in key_contained_by:
                 try:
                     ''' For the purpose of allowing replicas to accept the put request from the client'''
                     allow_replicas = (node != controller_node) 
                     vc = self.cache[node]["vector_clock"] 
                     url = (vc.ip, vc.port) 
-                    print (f"URL = {url}")
+                    print (f'=================')
+                    pprint (f"IP : {vc.ip} and PORT: {vc.port}")
+                    print (f'=================')
                     conn = rpyc.connect(*url)
-                    conn._config['sync_request_timeout'] = None
+                    # conn._config['sync_request_timeout'] = None
                     res = conn.root.exposed_put(key, value, allow_replicas)
                     print (f"Response : {res['status']}")
                     if res["status"] == self.SUCCESS: 
