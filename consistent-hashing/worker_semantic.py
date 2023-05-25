@@ -621,15 +621,22 @@ class Worker(rpyc.Service):
             print (f"[{int(vc.start_of_range) % 1000} , {int(node) % 1000}]| url = ({vc.ip}, {vc.port}), version = {vc.version_number} | Load = {vc.load}")   
         print("--"*25)
 
+
+    '''
+    This function is used for the purpose of async replicated put by the replica nodes
+    @value = +1/-1 based on increment or decrement operation 
+    '''
     def exposed_replicated_put(self, key, value, request_id, timestamp):
         print (f"Replica are called on {self.ip}, {self.port} for put..{key} = {value}")
         node = self.end_of_range
+        unique_key: str = f'{key}_{self.port}' # BUG FIX: included port, since we are using common redis list earlier 
+        value_to_append: float = value * timestamp # capture both +/- along with timestamp 
         with self.rds.pipeline() as pipe:
             pipe.watch(key)
             pipe.multi()
             while True:
                 try:
-                    pipe.rpush(key, value * timestamp)
+                    pipe.rpush(unique_key, value_to_append)
                     pipe.execute()
                     break 
                 except redis.WatchError as e:
@@ -758,9 +765,10 @@ class Worker(rpyc.Service):
 
     def exposed_get_key(self, key, request_id):
         print ('--' * 5, "Someone need get info", '--' * 5)
+        unique_key: str = f'{key}_{self.port}'
         #!FIXME: add exception hadling please...
         return {
-            "state": self.rds.lrange(key, 0, -1),
+            "state": self.rds.lrange(unique_key, 0, -1),
             "request_id": request_id,
             "node": self.end_of_range,
             "status": self.SUCCESS
@@ -784,12 +792,14 @@ class Worker(rpyc.Service):
         key_hash = str(self.hash_function(key))
         correct_node = ((start > end and (key_hash >= start or key_hash <= end)) or (start <= key_hash and key_hash < end))
         
+        unique_key: str = f'{key}_{self.port}'
+        
         if correct_node or allow_replicas:
             print ("At the right node for READ!....")
             if request_id not in self.get_requests_log:
                 self.get_requests_log[request_id] = dict()
             # query from redis
-            self_state = self.rds.lrange(key, 0, -1) 
+            self_state = self.rds.lrange(unique_key, 0, -1) 
             self_state = [float(s) for s in self_state]
             print (f'Self state in get: {self_state}')
 
@@ -877,6 +887,9 @@ class Worker(rpyc.Service):
         start, end = self.start_of_range, self.end_of_range 
         replica_nodes, controller_node = self.exposed_fetch_routing_info(key=key, need_serialized=False)
         correct_node = ((start > end and (key_hash >= start or key_hash <= end)) or (start <= key_hash and key_hash < end))
+        # Data to be stored unique_key.append(value) : value magically store timestamp with the sign of value
+        unique_key: str = f'{key}_{self.port}'
+        value_to_append: float = value * timestamp
         if allow_replicas or correct_node:    
             if allow_replicas:
                 print (f'PUT is handeled by replicas node, primary may be down!!!')
@@ -886,11 +899,11 @@ class Worker(rpyc.Service):
                 pipe.multi()
                 while True:
                     try:
-                        pipe.rpush(key, value * timestamp)
+                        pipe.rpush(unique_key, value_to_append)
                         pipe.execute()
                         break 
                     except redis.WatchError as e:
-                        print ("Watch error: ", e)
+                        print ("Watch error in redis:", e)
                         continue
             # controller node is not always the first node.(May be I'm a programmer)
             print ("Done writing to redis")
@@ -948,11 +961,15 @@ class Worker(rpyc.Service):
             we are free to repsonse to the client for their write
             and our background thread will try to make it to write to N replicas
             '''
-            waiting = self.wait_for_responses(responses, self.WRITE, 'WRITE') 
+            waiting = self.wait_for_responses(responses, self.WRITE, 'PUT') 
+
             if waiting['status'] == self.SUCCESS:
-                return {"status": self.SUCCESS, "msg": f"Successfully wrote {key} = {value}", "version_number": -1} 
+                return {"status": self.SUCCESS, 
+                        "msg": f"Successfully wrote {key} = {value}", 
+                        "version_number": -1} 
             else: 
-                return {"status": self.FAILURE, "msg": "Service unavailable! Retry again"}
+                return {"status": self.FAILURE, 
+                        "msg": "Service unavailable! Retry again"}
 
         else:
             ''' Return the node which should contain this key, if I'm not the controller

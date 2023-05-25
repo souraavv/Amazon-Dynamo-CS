@@ -85,7 +85,7 @@ class Client(rpyc.Service):
         return deserialize_response
 
     def serialize(self, response):
-        serialized_response = {}
+        serialized_response:list = list()
         for hash, vc in response.items():
             serialized_response[hash] = vc.to_dict()
         return serialized_response
@@ -127,7 +127,6 @@ class Client(rpyc.Service):
                 conn._config['sync_request_timeout'] = 15
                 replica_nodes, controller_node = conn.root.fetch_routing_info(key)
                 replica_nodes = self.deserialize(pickle.loads(replica_nodes))
-                # print ("Recieved: ", replica_nodes)
                 self.update_cache(key, replica_nodes, controller_node)
                 break
             except Exception as e:

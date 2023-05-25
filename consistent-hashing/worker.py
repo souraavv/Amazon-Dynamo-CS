@@ -123,15 +123,15 @@ class Worker(rpyc.Service):
     # Since it is added fresh now.
     
     def get_keys_from_redis_by_range(self, start_range, end_range):
-        print ("fetching from redis....")
+        print ("Fetching from redis....")
         res = self.rds.zrangebylex(self.sorted_set, '['+start_range, '['+ end_range)
         keys_value = dict()
         keys_timestamp = dict() 
-        # print ("fetched", res)
         for key in res:
             key = str(self.rds.get(str(key)))
             keys_value[key] = str(self.rds.hget(self.hashmap, key))
             keys_timestamp[key] = str(self.rds.get(key))
+        print ("DONE with Fetching")
         return keys_value, keys_timestamp
     '''
     This function will be called by new node which will ask for fetching
@@ -368,9 +368,6 @@ class Worker(rpyc.Service):
     '''
     def exposed_replicas_chit_chat(self, start_key_range, end_key_range, guest_keys_value, guest_keys_timestamp):
         self_keys_value, self_keys_timestamp = self.get_keys_from_redis_by_range(start_key_range, end_key_range)
-        print ("---"*10)
-        print (type(self_keys_timestamp), type(self_keys_timestamp))
-        print ("---"*10)
         
         guest_keys_value = pickle.loads(guest_keys_value)
         guest_keys_timestamp = pickle.loads(guest_keys_timestamp)
@@ -439,33 +436,37 @@ class Worker(rpyc.Service):
             random_node = end_key_range = nodes[my_pos - random_idx]
             ip, port = self.routing_table[random_node].ip, self.routing_table[random_node].port
             keys_value, keys_timestamp = self.get_keys_from_redis_by_range(start_key_range, end_key_range)
-            conn = rpyc.connect(ip, port)
-            conn._config['sync_request_timeout'] = None         
-    
-            keys_value = pickle.dumps(keys_value)
-            keys_timestamp = pickle.dumps(keys_timestamp)
-            res = conn.root.replicas_chit_chat(start_key_range, end_key_range, keys_value, keys_timestamp)
-            if res['status'] == self.SUCCESS:
-                gift_keys_value, gift_keys_timestamp = pickle.loads(res['gift_keys_value']), pickle.loads(res['gift_keys_timestamp'])
-                print (f"Types of gift: {gift_keys_value} and {gift_keys_timestamp}\n")
-                with self.rds.pipeline() as pipe:
-                    pipe.watch(self.hashmap)
-                    pipe.watch(self.sorted_set)
-                    pipe.multi()
-                    while True:
-                        try: 
-                            for key, value in gift_keys_value.items():
-                                key_hash = str(self.hash_function(key))
-                                pipe.set(key_hash, key)
-                                pipe.zadd(self.sorted_set, {key_hash: 1})
-                                pipe.hset(self.hashmap, key, value)
-                                pipe.set(key, gift_keys_timestamp[key])
-                            pipe.execute()
-                            break 
-                        except Exception as e:
-                            print ("Redis Watch error ", e)
-                            continue
+            
+            try:
+                conn = rpyc.connect(ip, port)
+                conn._config['sync_request_timeout'] = None         
         
+                keys_value = pickle.dumps(keys_value)
+                keys_timestamp = pickle.dumps(keys_timestamp)
+                res = conn.root.replicas_chit_chat(start_key_range, end_key_range, keys_value, keys_timestamp)
+                if res['status'] == self.SUCCESS:
+                    gift_keys_value, gift_keys_timestamp = pickle.loads(res['gift_keys_value']), pickle.loads(res['gift_keys_timestamp'])
+                    print (f"Gifts: {gift_keys_value} and {gift_keys_timestamp}\n")
+                    with self.rds.pipeline() as pipe:
+                        pipe.watch(self.hashmap)
+                        pipe.watch(self.sorted_set)
+                        pipe.multi()
+                        while True:
+                            try: 
+                                for key, value in gift_keys_value.items():
+                                    key_hash = str(self.hash_function(key))
+                                    pipe.set(key_hash, key)
+                                    pipe.zadd(self.sorted_set, {key_hash: 1})
+                                    pipe.hset(self.hashmap, key, value)
+                                    pipe.set(key, gift_keys_timestamp[key])
+                                pipe.execute()
+                                break 
+                            except Exception as e:
+                                print ("Redis Watch error ", e)
+                                continue
+            
+            except Exception as e:
+                print (f'Somthing bad happen during syncing replicas : {e}')
 
 
     '''
@@ -652,19 +653,13 @@ class Worker(rpyc.Service):
     of unnecessary calls
     '''
 
-    def wait_for_responses(self, responses, required):
+    def wait_for_responses(self, responses, required, reqType:str=""):
         print ("Waiting for responses...")
-        count_success_responses = 0
-        count_error_responses = 0
         while True:
+            count_success_responses = 0
+            count_error_responses = 0
             try:
-                print (f'success: {count_success_responses}, error = {count_error_responses}')
-                if count_success_responses >= required:
-                    print ("Done with waiting for reponses: success")
-                    return {"status": self.SUCCESS} 
-                if count_error_responses > self.N - required:
-                    print ("Done with waiting for reponses: failure")
-                    return {"status": self.FAILURE}
+                print (f'{reqType}::: Success: {count_success_responses}, Error = {count_error_responses}')
                 for response in responses:
                     if response.ready:
                         res = response.value
@@ -674,10 +669,15 @@ class Worker(rpyc.Service):
                             count_error_responses += 1
                     # else:
                         # print ("not ready!", response.ready)
+                if count_success_responses >= required:
+                    print ("Done with waiting for reponses: success")
+                    return {"status": self.SUCCESS} 
+                if count_error_responses > self.N - required:
+                    print ("Done with waiting for reponses: failure")
+                    return {"status": self.FAILURE}
             except Exception as e:
-                print ("Something bad happen ", e)
+                print (f"{reqType} :: Something bad happen ", e)
                 
-        print ("Done with waiting for reponses")
 
     def replicate(self):
         while True:
@@ -726,15 +726,18 @@ class Worker(rpyc.Service):
             # print (f"Piggy backing lot of request: {piggy_backing}")
             responses = []
             for node, requests in piggy_backing.items():
-                ip, port = self.routing_table[node].ip, self.routing_table[node].port 
-                conn = rpyc.connect(ip, port)
-                async_func = rpyc.async_(conn.root.bulk_put)
-                res = async_func(requests)
-                res.add_callback(callback)
-                res.set_expiry(self.EXPIRE)
-                responses.append(res) 
+                try:
+                    ip, port = self.routing_table[node].ip, self.routing_table[node].port 
+                    conn = rpyc.connect(ip, port)
+                    async_func = rpyc.async_(conn.root.bulk_put)
+                    res = async_func(requests)
+                    res.add_callback(callback)
+                    res.set_expiry(self.EXPIRE)
+                    responses.append(res) 
+                except Exception as e:
+                    print (f'Somthing bad happen during replicate operation : {e}')
 
-            waiting = self.wait_for_responses(responses, len(responses))
+            waiting = self.wait_for_responses(responses, len(responses), 'REPLICATE')
 
     '''
     This is used by piggybacks so that put can be handled for mutiple
@@ -819,17 +822,20 @@ class Worker(rpyc.Service):
             responses = []
             for node in replica_nodes:
                 if node in self.routing_table.keys():
-                    vc = self.routing_table[node]
-                    conn = rpyc.connect(vc.ip, vc.port)
-                    async_func = rpyc.async_(conn.root.get_key)
-                    res = async_func(key, request_id)
-                    res.add_callback(callback)
-                    res.set_expiry(self.EXPIRE)
-                    responses.append(res) 
+                    try:
+                        vc = self.routing_table[node]
+                        conn = rpyc.connect(vc.ip, vc.port)
+                        async_func = rpyc.async_(conn.root.get_key)
+                        res = async_func(key, request_id)
+                        res.add_callback(callback)
+                        res.set_expiry(self.EXPIRE)
+                        responses.append(res) 
+                    except Exception as e:
+                        print (f'Something bad happen during GET : {e}')
             
             print ("Waiting for get...")
 
-            waiting = self.wait_for_responses(responses, self.READ)
+            waiting = self.wait_for_responses(responses, self.READ, 'GET')
             print ("Wait done..")
             if waiting['status'] == self.SUCCESS: 
                 return {"status": self.SUCCESS, "value": {self.get_requests_log[request_id]['fresh_value']}}
@@ -846,6 +852,7 @@ class Worker(rpyc.Service):
         start, end = self.start_of_range, self.end_of_range 
         replica_nodes, controller_node = self.exposed_fetch_routing_info(key=key, need_serialized=False)
         
+
         if ((start > end and (key_hash >= start or key_hash <= end)) or (start <= key_hash and key_hash < end)):    
             print ("OK, Correct node (controller) to put")
             print ("Writing to REDIS..")
@@ -923,7 +930,7 @@ class Worker(rpyc.Service):
                 and our background thread will try to make it to write to N replicas
             '''
             # time.sleep(5) # this will be replced by wait
-            waiting = self.wait_for_responses(responses, self.WRITE) 
+            waiting = self.wait_for_responses(responses, self.WRITE, 'PUT') 
             if waiting['status'] == self.SUCCESS:
                 return {"status": self.SUCCESS, "msg": f"Successfully wrote {key} = {value}", "version_number": -1} 
             else: 

@@ -71,8 +71,8 @@ def test_workers() -> None:
     conn: rpyc.Connection = rpyc.connect(*url).root
     res: str = conn.get()
 
-ports = [3100, 3101, 3101, 3103, 3104, 3105]
-
+semantic_ports = [3100, 3101, 3101, 3103, 3104, 3105]
+syntactic_ports = [3000, 3001, 3002, 3003, 3004, 3005]
 
 while True: 
     print (
@@ -81,10 +81,10 @@ while True:
     Go with one of the option
     1. Testing hashring
     2. Test spawn workers
-    3. Test Client put for syntactic
-    4. Test Client get form syntatic
-    5. Semantic Put
-    6. Semantic Read
+    3. Syntactic PUT
+    4. Syntactic GET
+    5. Semantic PUT
+    6. Semantic GET
     -------------------
     7. Network PARTITION
     8. Network HEAL
@@ -97,19 +97,16 @@ while True:
         elif option == 2: 
             test_spawn_wokers()
         elif option == 3:
-            for i in range(0, 10):
-                s: str = get_random_string(5)
-                test_client_put(s, randint(1, 10))
+            key: str = 'rqdgq' #get_random_string(5)
+            print (f'Key is {key}')
+            value: int = int(input("provide value: "))
+            test_client_put(key, value)
         elif option == 4:
-            test_client_get('sepdt')
+            test_client_get('rqdgq')
         elif option == 5:
             hold_key: list = list()
-            # for _ in range(0, 5):
-            #     key: str = get_random_string(25)
-            #     hold_key.append(key)
             key = 'rqdgq'
             test_semantic_put(key)
-            # for key in hold_key:
             
         elif option == 6:
             key: str = 'rqdgq'
@@ -118,6 +115,8 @@ while True:
             node1_ip = '10.237.27.95'
             node2_ip = '10.17.50.254'
             select_ip = int(input('Which node sourav(1)/baadalvm(2): '))
+            task_type = int(input("Sematic(1) or Syntactic(2) "))
+            ports = semantic_ports if task_type == 1 else syntactic_ports
             select_ip = node1_ip if select_ip == 1 else node2_ip
             block_traffic(select_ip, ports)
         elif option == 8:
@@ -125,6 +124,8 @@ while True:
             node2_ip = '10.17.50.254'
             select_ip = int(input('Which node sourav(1)/baadalvm(2): '))
             select_ip = node1_ip if select_ip == 1 else node2_ip
+            task_type = int(input("Sematic(1) or Syntactic(2) "))
+            ports = semantic_ports if task_type == 1 else syntactic_ports
             heal_firewall(select_ip, ports)            
         else:
             break

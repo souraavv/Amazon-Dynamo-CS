@@ -23,13 +23,13 @@ def heal_firewall(ip_address, port_set):
 if __name__ == '__main__':
     print (f'1. Network partition')
     print (f'2. Heal partition')
-
     which = int(input('Which option ? '))
-    which_node = int(input('which nodes cluster (node1, node2) ? '))
+    which_node = int(input('which nodes cluster (sourav(1), baadalvm(2)) ? '))
+    which_task = int(input('Which task Semantic(1) and Syntactic(2) ? '))
     ip = '10.237.27.95' if which_node == 1 else '10.17.50.254'
-
-    # vnodes = [3100, 3103, 3105]
-    vnodes = [3100, 3101, 3102, 3103, 3104, 3105]
+    semantic_vnodes = [3100, 3104, 3105]
+    syntactic_vnodes = [3000, 3004, 3005]
+    vnodes = semantic_vnodes if which_task == 1 else syntactic_vnodes
     if which == 1:
         block_traffic(ip, vnodes)
     elif which == 2:

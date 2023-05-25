@@ -181,7 +181,6 @@ class Client(rpyc.Service):
         retry_count:int = 0
         while retry_count < self.RETRIES:
             print (f"Retrying ... {retry_count + 1}" )
-            
             retry_count += 1
             break_reason = ''
             res = None
@@ -191,7 +190,6 @@ class Client(rpyc.Service):
                     url = (vc.ip, vc.port) 
                     conn = rpyc.connect(*url)
                     conn._config['sync_request_timeout'] = None
-                    
                     res = conn.root.exposed_get(key)
                     print (f"Response : {res['status']}")
                     

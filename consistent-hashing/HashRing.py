@@ -9,6 +9,7 @@ import subprocess as sp
 from hashlib import md5
 from bisect import bisect
 from pexpect import pxssh
+from pprint import pprint
 from dotenv import load_dotenv
 from os.path import join, dirname
 from rpyc.utils.server import ThreadedServer
@@ -240,10 +241,9 @@ class HashRing(rpyc.Service):
         for idx in range(0, required_nodes):
             node_conf.append(self.resources[idx])
             
-        print (f'asked: {required_nodes}, allocated: {node_conf}')
+        pprint (f'Asked: {required_nodes}\n Allocated: {node_conf}')
         # add the nodes to the list
         self.exposed_add_node(node_conf)
-        print (node_conf)
         for node in node_conf:
             self.resources.remove(node)
         return {"status": 0, "msg": "success"}
@@ -254,12 +254,14 @@ class HashRing(rpyc.Service):
 
 
 if __name__ == '__main__':
-    types_of_workers:list = ['syntactic', 'semantic']
-    spawn_whom:str = types_of_workers[1]
-    
-    print (f"Nodes will be spawn for {spawn_whom} workers")
+    types_of_workers:list = ['semantic', 'syntactic']
+    worker_type: int = int(input('Which worker you want to initialize ? \n1. Semantic:: Suitable for in-general key-value store\n2. Syntactic::Suitable for username & password\nEnter response(1/2): '))
+    print (worker_type)
+    if (worker_type != 1) and (worker_type != 2):
+        raise ValueError('Invalid argument provided, please provide 1 or 2')
+    spawn_whom:str = types_of_workers[worker_type - 1]
     workers_port:int = 3100 if spawn_whom == 'semantic' else 3000
-    print (f"Workers will be spawn for {spawn_whom}, Worker port: {workers_port}")
+    print (f"Workers will be spawn for {spawn_whom}\nWorker port: {workers_port}")
     nodes = [
         {
             'username': 'sourav',
