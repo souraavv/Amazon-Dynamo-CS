@@ -28,18 +28,18 @@ class Hashring(rpyc.Service):
     Constructor
     Initialize the list of resources and all other attributes
     '''
-    def __init__(self) -> None:
+    def __init__(self, current_worker_type, initial_port) -> None:
         # resources: list: containing the object hostname and list of virtual nodes' ports
         self.resources = [
             {
                 'hostname': '10.237.27.245',
                 'username': 'chintan',
-                'port': 3000,
+                'port': initial_port,
             },
             {
                 'hostname': '10.17.10.15',
                 'username': 'baadalvm',
-                'port': 3000,
+                'port': initial_port,
             }
         ]
         #* nodes: dict(): host name -> config : actual hosts
@@ -50,9 +50,11 @@ class Hashring(rpyc.Service):
         self.keys = []
         self.N = 4
         #! check if needed vnodes count
-        self.VNODES_COUNT = 4
+        self.VNODES_COUNT = 6
 
         self.SPAWNING_PROC_PORT = 6666
+
+        self.current_worker_type = current_worker_type
 
         # copy code to resources
         # for resource in self.resources:
@@ -162,7 +164,7 @@ class Hashring(rpyc.Service):
                 # hashes.append(node_hash)
                 hash_to_vnode[node_hash] = (hostname, port, vid)
             print(f'hostname: {hostname}, port: {self.SPAWNING_PROC_PORT}')
-            rpyc.connect(hostname, self.SPAWNING_PROC_PORT, config={"sync_request_timeout": 2400}).root.spawn_worker(self.VNODES_COUNT, initial_port)
+            rpyc.connect(hostname, self.SPAWNING_PROC_PORT, config={"sync_request_timeout": 2400}).root.spawn_worker(self.VNODES_COUNT, initial_port, current_worker_type)
         # rpc call to the self node and next nodes of each node 
         time.sleep(20)
         for hash, (hostname, port, vid) in hash_to_vnode.items():
@@ -259,5 +261,9 @@ class Hashring(rpyc.Service):
 
 if __name__ == "__main__":
     print('Listening on port 3000')
-    t = ThreadedServer(Hashring(), hostname = '0.0.0.0', port = 3000)
+    
+    worker_types = ['syntactic', 'semantic']
+    current_worker_type = worker_types[1]
+    initial_port = 3000 if current_worker_type == 'syntactic' else 3100
+    t = ThreadedServer(Hashring(current_worker_type, initial_port), hostname = '0.0.0.0', port = 3000)
     t.start()

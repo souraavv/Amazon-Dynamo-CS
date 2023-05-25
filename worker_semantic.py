@@ -1,3 +1,4 @@
+# Imports
 import sys
 import rpyc
 import time
@@ -49,12 +50,18 @@ class Worker(rpyc.Service):
         # HASHMAP and SORTED SET name in the redis
         self.HASHMAP = f'HASHMAP-{self.port}'
         self.SORTED_SET = f'SORTED_SET-{self.port}'
+
+        # Entire state of operations: State based CRDT
+        # Dictionary containing entire state of the operations which are being transferred during reconciliation
+        # The reconciliation will happen at one of the nodes
+        self.state = dict()
+
         # Log of requests for bg thread
         self.requests_log = dict()
         self.get_requests_log = dict()
         self.READ = 2
         self.WRITE = 2
-        self.N = self.READ + self.WRITE + 1
+        self.N = 8
         self.FAILURE_STATUS = 0
         self.SUCCESS_STATUS = 1
         self.IGNORE_STATUS = 2
@@ -82,7 +89,8 @@ class Worker(rpyc.Service):
 
         gossip_thread.start()
         ping_failed_nodes_thread.start()
-        replicate_put_thread.start()
+        #TODO start this thread after debugging is done
+        # replicate_put_thread.start()
         replica_sync_thread.start()
         # Data to be kept in redis storage
         #* key -> value, version number
@@ -94,27 +102,32 @@ class Worker(rpyc.Service):
         return res_dict
     
     def exposed_exchange_keys(self, received_key_values, received_key_timestamps, start_key_range, end_key_range):
-        print(f'exchange keys called for {self.port}')
-        print(f'type key timestamps: {type(received_key_timestamps)}')
         my_key_values, my_key_timestamps = self.get_keys_from_redis_by_range(start_key_range, end_key_range)
+        
         received_key_values = pickle.loads(received_key_values)
         received_key_timestamps = pickle.loads(received_key_timestamps)
+        
         return_key_values = dict()
         return_key_timestamps = dict()
+        
         with self.rds.pipeline() as pipe:
+            
             pipe.watch(self.SORTED_SET)
             pipe.watch(self.HASHMAP)
             pipe.multi()
+
             while True:
                 try:
                     for key, timestamp in received_key_timestamps.items():
                         not_exists = key not in my_key_timestamps
                         deprecated_key = not_exists or my_key_timestamps[key] < timestamp
+
                         if deprecated_key:
                             if not_exists:
                                 key_hash = self.hash(key)
                                 pipe.zadd(self.SORTED_SET, {key_hash: 1})
                                 pipe.set(key_hash, key)
+                                
                             pipe.hset(self.HASHMAP, key, received_key_values[key])
                             pipe.set(key, timestamp)
                         else:
@@ -131,9 +144,10 @@ class Worker(rpyc.Service):
             if key not in received_key_timestamps:
                 return_key_values[key] = my_key_values[key]
                 return_key_timestamps[key] = my_key_timestamps[key]
-        print(f'returning key values and timestamps')
+
         return_key_values = pickle.dumps(return_key_values)
         return_key_timestamps = pickle.dumps(return_key_timestamps)
+
         return {
             "status": self.SUCCESS_STATUS,
             "key_values": return_key_values,
@@ -143,61 +157,65 @@ class Worker(rpyc.Service):
     
     def sync_replica(self):
         while True:
-            time.sleep(self.REPLICATE_SYNC_TIMEOUT)
-            print(f'sync replica called')
-            node_keys = sorted(list(self.routing_table.keys()))
-            if len(node_keys) <= 1:
-                continue
-            my_pos = bisect(node_keys, self.range[0])
-            node_to_replicate = min(self.N, len(node_keys) - 1)
-            random_shift = random.randint(1, node_to_replicate)
-            random_idx = my_pos - random_shift
-            random_node = self.routing_table[node_keys[random_idx]]
-            start_key_range = self.routing_table[node_keys[my_pos - node_to_replicate]].start_range
-            end_key_range = node_keys[random_idx]
+            try:
+                time.sleep(self.REPLICATE_SYNC_TIMEOUT)
+                node_keys = sorted(list(self.routing_table.keys()))
+                if len(node_keys) <= 1:
+                    continue
 
-            key_values, key_timestamps = self.get_keys_from_redis_by_range(start_key_range, end_key_range)
+                my_pos = bisect(node_keys, self.range[0])
+                node_to_replicate = min(self.N, len(node_keys) - 1)
 
-            print(f'sync replica called from : {self.hostname}: {self.port}')
-            print(f'exchanging keys with: {random_node.hostname}, {random_node.port}')
-            print(f'exchanging keys from node: {self.hostname}: {self.port} = {key_values}')
+                random_shift = random.randint(1, node_to_replicate)
+                random_idx = my_pos - random_shift
+                random_node = self.routing_table[node_keys[random_idx]]
 
-            key_values = pickle.dumps(key_values)
-            key_timestamps = pickle.dumps(key_timestamps)
-            response = rpyc.connect(random_node.hostname, random_node.port).root.exchange_keys(key_values, key_timestamps, start_key_range, end_key_range)
+                start_key_range = self.routing_table[node_keys[my_pos - node_to_replicate]].start_range
+                end_key_range = node_keys[random_idx]
 
-            if response['status'] == self.SUCCESS_STATUS:
-                response_key_values, response_key_timestamps = response['key_values'], response['key_timestamps']
-                response_key_values = pickle.loads(response_key_values)
-                response_key_timestamps = pickle.loads(response_key_timestamps)
+                key_values, key_timestamps = self.get_keys_from_redis_by_range(start_key_range, end_key_range)
 
-                print(f'received response on {self.port}: {response_key_values}')
-                
-                with self.rds.pipeline() as pipe:
-                    pipe.watch(self.HASHMAP)
-                    pipe.watch(self.SORTED_SET)
-                    pipe.multi()
-                    while True:
-                        try:
-                            for key, timestamp in response_key_timestamps.items():
-                                key_hash = self.hash(key)
-                                pipe.zadd(self.SORTED_SET, {key_hash: 1})
-                                pipe.set(key_hash, key)
-                                pipe.hset(self.HASHMAP, key, response_key_values[key])
-                                pipe.set(key, timestamp)
-                            pipe.execute()
-                            break
-                        except Exception as e:
-                            print(f'Error in sync replicas response = {e}')
-                            continue
+                key_values = pickle.dumps(key_values)
+                key_timestamps = pickle.dumps(key_timestamps)
+                response = rpyc.connect(random_node.hostname, random_node.port).root.exchange_keys(key_values, key_timestamps, start_key_range, end_key_range)
+
+                if response['status'] == self.SUCCESS_STATUS:
+                    response_key_values, response_key_timestamps = response['key_values'], response['key_timestamps']
+                    response_key_values = pickle.loads(response_key_values)
+                    response_key_timestamps = pickle.loads(response_key_timestamps)
+
+                    with self.rds.pipeline() as pipe:
+                        pipe.watch(self.HASHMAP)
+                        pipe.watch(self.SORTED_SET)
+                        pipe.multi()
+                        
+                        while True:
+                            try:
+                                for key, timestamp in response_key_timestamps.items():
+                                    key_hash = self.hash(key)
+
+                                    pipe.zadd(self.SORTED_SET, {key_hash: 1})
+                                    pipe.set(key_hash, key)
+                                    pipe.hset(self.HASHMAP, key, response_key_values[key])
+                                    pipe.set(key, timestamp)
+
+                                pipe.execute()
+                                break
+                            except Exception as e:
+                                print(f'Error in sync replicas response = {e}')
+                                continue
+            except Exception as e:
+                print(f'Error in connecting: {e}')
     
     def get_keys_from_redis_by_range(self, start_range, end_range):
-        print(f'start_range: {start_range}, end_range: {end_range}')
         key_hashes = self.rds.zrangebylex(self.SORTED_SET, '[' + start_range, '[' + end_range)
+
         # The above method returns list of tuple(key in binary, value)
         # So extracting out the keys from it
+
         key_values = dict()
         key_timestamps = dict()
+
         for key_hash in key_hashes:
             key = str(self.rds.get(str(key_hash)))
             key_values[key] = str(self.rds.hget(self.HASHMAP, key))
@@ -236,16 +254,21 @@ class Worker(rpyc.Service):
         # Add the new node to the routing table
         new_node_end_point = self.hash(new_node_config['hostname'] + '_' + str(new_node_config['port']))
         new_node_config['version_no'] = 1
+        
         self.routing_table_lock.acquire()
         self.routing_table[str(new_node_end_point)] = self.create_or_update_routing_table_entry(new_node_config)
+
         # update your own start range
         my_start_point = str(int(new_node_end_point) + 1)
         self_end = self.range[1]
+
         my_version_no = self.routing_table[str(self_end)].version_no
         self.range = (my_start_point, self_end)
+
         # self.routing_table_lock.acquire()
         self.routing_table[str(self_end)].start_range = my_start_point
         self.routing_table[str(self_end)].version_no = my_version_no + 1
+
         self.routing_table_lock.release()
         self.print_routing_table()
 
@@ -283,13 +306,12 @@ class Worker(rpyc.Service):
                 try:
                     print(f'fetching from {node["hostname"]}: {node["port"]}')
                     res = rpyc.connect(node['hostname'], node['port']).root.giveback_keys(start_range, end_range)
-                    print(f'result from giveback keys = {res}')
                     if res['status'] == self.SUCCESS_STATUS:
                         key_values = res['key_values']
                         key_timestamps = res['key_timestamps']
                         key_values = pickle.loads(key_values)
                         key_timestamps = pickle.loads(key_timestamps)
-                        print(f'keys fetched = {res["key_values"]}')
+                        
                         with self.rds.pipeline() as pipe:
                             pipe.watch(self.HASHMAP)
                             pipe.watch(self.SORTED_SET)
@@ -303,7 +325,6 @@ class Worker(rpyc.Service):
                                         pipe.set(key_hash, key)
                                     for key, timestamp in key_timestamps.items():
                                         pipe.set(key, timestamp)
-                                    print(f'Successfully stored all the keys')
                                     pipe.execute()
                                     break
                                 except Exception as e:
@@ -321,12 +342,13 @@ class Worker(rpyc.Service):
         pass
 
     def exposed_init_self_key_range(self, node_config, next_node_config, replica_nodes):
-        # print(f'call received, self end range: {node_config["end_range"]}')
         self.range = (node_config['start_range'], node_config['end_range'])
         node_config['version_no'] = 1
+
         self.routing_table_lock.acquire()
         self.routing_table[str(node_config['end_range'])] = self.create_or_update_routing_table_entry(node_config)
         self.routing_table_lock.release()
+
         # initialize the thread to fetch from W next workers
         self.fetch_and_store_keys(next_node_config, replica_nodes)
 
@@ -342,7 +364,7 @@ class Worker(rpyc.Service):
                 random_node = self.routing_table[str(random_node_end)]
                 if random_node_end == self.range[1]:
                     continue
-                # TODO send the entire routing table to the random node along with the failed nodes(for this node).
+                #TODO send the entire routing table to the random node along with the failed nodes(for this node).
                 routing_table = pickle.dumps(self.serialize(self.routing_table))
                 failed_nodes = pickle.dumps(self.serialize(self.failed_nodes))
                 to_ping_nodes = dict()
@@ -408,6 +430,7 @@ class Worker(rpyc.Service):
 
     def replicate_put_thread(self):
         time.sleep(self.REPLICATE_PUT_THREAD_TIMEOUT)
+        
         while True:
             piggyback_requests = dict()
             for request_id, nodes in self.requests_log.items():
@@ -448,13 +471,19 @@ class Worker(rpyc.Service):
             responses = []
 
             for node, requests in piggyback_requests.items():
-                hostname, port = self.routing_table[node].hostname, self.routing_table[node].port
-                conn = rpyc.connect(hostname, port)
-                async_func = rpyc.async_(conn.root.bulk_put)
-                res = async_func(requests)
-                res.add_callback(callback)
-                res.set_expiry(self.EXPIRE)
-                responses.append(res)
+                try:
+                    hostname, port = self.routing_table[node].hostname, self.routing_table[node].port
+                    
+                    conn = rpyc.connect(hostname, port)
+                    async_func = rpyc.async_(conn.root.bulk_put)
+
+                    res = async_func(requests)
+                    res.add_callback(callback)
+                    res.set_expiry(self.EXPIRE)
+                    
+                    responses.append(res)
+                except Exception as e:
+                    print(f'Error: {e}')
             
             self.wait_for_responses(responses, len(responses))
 
@@ -462,6 +491,7 @@ class Worker(rpyc.Service):
     def exposed_bulk_put(self, requests):
         success_requests = []
         ignored_requests = []
+
         for request in requests:
             res = self.exposed_replicate_put(request['key'], request['value'], request['request_id'], request['timestamp'])
             if res.status == self.SUCCESS_STATUS:
@@ -477,8 +507,9 @@ class Worker(rpyc.Service):
             print (f"[{vc.start_range}, {node}]| url = ({vc.hostname}, {vc.port}), version = {vc.version_no} | Load = {vc.load}")
         self.routing_table_lock.release()
 
-        print("-"*10, "Failed Nodes", "-" * 10)
+        print("-" * 10, "Failed Nodes", "-" * 10)
         self.failed_nodes_lock.acquire()
+        
         for node, vc in self.failed_nodes.items():
             print (f"[{vc.start_range}, {node}]| url = ({vc.hostname}, {vc.port}), version = {vc.version_no} | Load = {vc.load}")   
         self.failed_nodes_lock.release()
@@ -495,9 +526,11 @@ class Worker(rpyc.Service):
         '''
         routing_table = self.deserialize(pickle.loads(routing_table))
         failed_nodes = self.deserialize(pickle.loads(failed_nodes))
+
         return_nodes = dict()
         return_failed_nodes = dict()
         to_ping_nodes = dict()
+
         for hash, node in routing_table.items():
             if hash in self.routing_table:
                 self_node = self.routing_table[str(hash)]
@@ -564,25 +597,13 @@ class Worker(rpyc.Service):
     
     def exposed_replicate_put(self, key, key_hash, value, request_id, timestamp):
         print(f'Received replicate put for {key} = {value}')
-        store_timestamp = None
-        if self.rds.get(key) == None:
-            store_timestamp = timestamp
-        else:
-            store_timestamp = float(self.rds.get(key))
-        
-        if store_timestamp > timestamp:
-            return {"status": self.IGNORE_STATUS, "message": "I'm more updated"}
 
         with self.rds.pipeline() as pipe:
-            pipe.watch(self.HASHMAP)
-            pipe.watch(self.SORTED_SET)
+            pipe.watch(key)
             pipe.multi()
             while True:
                 try:
-                    pipe.set(key_hash, key)
-                    pipe.hset(self.HASHMAP, key, value)
-                    pipe.zadd(self.SORTED_SET, {key_hash: 1})
-                    pipe.set(key, timestamp)
+                    pipe.rpush(key, timestamp * value)
                     pipe.execute()
                     break
                 except redis.WatchError as e:
@@ -595,55 +616,58 @@ class Worker(rpyc.Service):
         return self.hash(request_id), curr_time
     
     def wait_for_responses(self, responses, count_responses):
-        count_success_responses = 0
-        count_error_responses = 0
         while True:
+            time.sleep(2)
             try:
+                count_success_responses = 0
+                count_error_responses = 0
                 for response in responses:
-                    if count_success_responses >= count_responses:
-                        return {"status": self.SUCCESS_STATUS, "message": "Success"}
-                    if count_error_responses > self.N - count_responses:
-                        return {"status": self.FAILURE_STATUS, "message": "Failure. Please try again"}
+                    
                     if response.ready:
                         res = response.value
-                        print(f'success responses = {count_success_responses}')
-                        print(f'error responses = {count_error_responses}')
                         if res['status'] == self.SUCCESS_STATUS:
                             count_success_responses += 1
                             print(f'Success responses = {count_success_responses}')
                         else:
                             print(f'Error responses = {count_error_responses}')
                             count_error_responses += 1
+
+                if count_success_responses >= count_responses:
+                    print(f'Success responses more than required')
+                    return {"status": self.SUCCESS_STATUS, "message": "Success"}
+                
+                if count_error_responses > self.N - count_responses:
+                    return {"status": self.FAILURE_STATUS, "message": "Failure. Please try again"}
             except Exception as e:
                 print(f"Error in wait for responses = {e}")
 
-    def exposed_put(self, key, value):
+
+    def exposed_put(self, key, value, allow_replicas = False):
+        # value can either be 1 or -1, depending on the operation is increment or decrement
         print(f'Received put request: {key}: {value}')
         key_hash = self.hash(key)
         start, end = self.range
         # print(f'Put request call received by = {self.port}')
         # print(f'Start range = {self.range[0]}, end range = {self.range[1]}, hash = {key_hash}')
         replica_nodes, controller_key = self.exposed_get_routing_table_info(key, is_rpc = False)
-        # print(f'key hash type: {type(key_hash)}, start: {type(start)}, end: {type(end)}')
-        if (key_hash >= start and key_hash <= end) or (start > end and (key_hash >= start or key_hash <= end)):
-            # print(f"It's my request: {key} = {value}")
+
+        # check if key belongs to me
+        correct_node = (key_hash >= start and key_hash <= end) or (start > end and (key_hash >= start or key_hash <= end))
+        if allow_replicas or correct_node:
             # Generating a unique request id
             request_id, timestamp = self.get_request_id(key)
             with self.rds.pipeline() as pipe:
-                pipe.watch(self.HASHMAP)
-                pipe.watch(self.SORTED_SET)
+                pipe.watch(key)
                 pipe.multi()
                 while True:
                     try:
-                        print(f'In put')
-                        print(f'key = {key}, type = {type(key)}')
-                        pipe.set(key_hash, key)
-                        pipe.hset(self.HASHMAP, key, value)
-                        pipe.zadd(self.SORTED_SET, {key_hash: 1})
-                        pipe.set(key, timestamp)
+                        # add the operation to the list of the key
+                        print(f'Storing into redis- {key}: {value}')
+                        pipe.rpush(key, timestamp * value)
                         pipe.execute()
                         break
                     except redis.WatchError as e:
+                        print(f'Redis watch error: {e}')
                         continue
             
 
@@ -652,7 +676,6 @@ class Worker(rpyc.Service):
             if len(self.routing_table.keys()) < self.WRITE:
                 return {"status": self.FAILURE_STATUS, "message": "Please try again later, not enough nodes to replicate"}
 
-            # print(f'Initializing request')
             if request_id not in self.requests_log:
                 self.requests_log[request_id] = {'info': None, 'replicated_on': 0}
             self.requests_log[request_id]['info'] = (key, value, timestamp)
@@ -669,7 +692,6 @@ class Worker(rpyc.Service):
                     res = response.value
                     request_id = res['request_id']
                     node_hash = res['node_hash']
-                    # print(f'Received response from node: {node_hash}')
                     del self.requests_log[request_id][node_hash]
                     if res['status'] == self.SUCCESS_STATUS:
                         self.requests_log[request_id]['replicated_on'] += 1
@@ -679,16 +701,17 @@ class Worker(rpyc.Service):
                 # sending the request to it again, can't delete over here as the condition for returning to client wil
                 # get true before replicating successfully on W nodes.
 
+            # sending the put request to the replicas
             responses = []
             for node_hash, replica_node in replica_nodes.items():
                 # Ignore sending to self
                 if node_hash == self.range[1]:
                     continue
                 try:
-                    # print(f'sending put request to node: {node_hash}')
                     conn = rpyc.connect(replica_node.hostname, replica_node.port)
                     async_func = rpyc.async_(conn.root.replicate_put)
                     res = async_func(key, key_hash, value, request_id, timestamp)
+
                     res.add_callback(response_callback)
                     res.set_expiry(self.EXPIRE)
                     responses.append(res)
@@ -700,84 +723,88 @@ class Worker(rpyc.Service):
             # background thread will handle the other responses and sending to hinted replica
             resp = self.wait_for_responses(responses, self.WRITE)
             if resp['status'] == self.SUCCESS_STATUS:
+                print(f'Returning success')
                 return {"status": self.SUCCESS_STATUS, "message": f'Successfully wrote {key} = {value}'}
             else:
                 return {"status": self.FAILURE_STATUS, "message": "Failed"}
 
         else:
-            # print(f'Replica nodes = {replica_nodes}')
             # return the nodes which would be potentially helding the key
+            print(f'Invalid resource')
             return {"status": self.INVALID_RESOURCE, "controller_key": controller_key, "replica_nodes": replica_nodes}
         
-    def exposed_get_key(self, key, timestamp, request_id):
-        # print(f'get key received for {key}')
+    def exposed_get_key(self, key, request_id):
         try:
-            my_timestamp  = self.rds.get(key)
-            my_value = self.rds.hget(self.HASHMAP, key)
-            return {"status": self.SUCCESS_STATUS, "request_id": request_id, "timestamp": my_timestamp, "value": my_value, "node_hash": self.range[1]}
+            my_list = self.rds.lrange(key, 0, -1)
+            return {"status": self.SUCCESS_STATUS, "request_id": request_id, "state": my_list, "node_hash": self.range[1]}
         except Exception as e:
             print(f'Error in get key = {e}')
 
-    def exposed_get(self, key):
+    def exposed_get(self, key, allow_replicas = False):
+        print(f'Received get request for {key}')
+        
         key_hash = self.hash(key)
+        
         replica_nodes, controller_key = self.exposed_get_routing_table_info(key, is_rpc = False)
         start, end = self.range
-        # print(f'Received request for get')
-        if (key_hash >= start and key_hash <= end) or (start > end and (key_hash >= start or key_hash <= end)):
-            # print(f"It's my request = {key}")
+
+        correct_node = (key_hash >= start and key_hash <= end) or (start > end and (key_hash >= start or key_hash <= end))
+        if correct_node or allow_replicas:
             try:
                 request_id, _ = self.get_request_id(key)
-                count_responses = 0
-                fresh_value = self.rds.hget(self.HASHMAP, key)
-                fresh_timestamp = self.rds.get(key)
-                # print(f'request id = {request_id}')
-                self.get_requests_log[str(request_id)] = {"value": fresh_value, "timestamp": fresh_timestamp, "count_responses": count_responses}
-                self.get_requests_log[request_id + "__NODE__"] = []
+                self.get_requests_log[str(request_id)] = dict()
             except Exception as e:
                 print(f"Error in get = {e}")
-            # print('got from myself')
+
+            # Get your own list stored in redis for the key
+            state = self.rds.lrange(key, 0, -1)
+            for element in state:
+                self.get_requests_log[str(request_id)][float(element)] = 1
 
             # RPC response callback
             def response_callback(response):
                 try:
                     res = response.value
                     request_id = res['request_id']
-                    # print(f'get requests log = {self.get_requests_log.keys()}')
-                    # print(f'Present: {str(request_id) in self.get_requests_log}')
-                    curr_timestamp = self.get_requests_log[str(request_id)]['timestamp']
-                    node_hash = res['node_hash']
-                    res_timestamp = res['timestamp']
-                    res_value = res['value']
-                    # print(f'Received response from {node_hash}')
-                    if curr_timestamp < res_timestamp:
-                        self.get_requests_log[request_id]['value'] = res_value
-                        self.get_requests_log[request_id]['timestamp'] = res_timestamp
-                        self.get_requests_log[request_id + "__NODE__"] = [node_hash]
-                    elif curr_timestamp == res_timestamp:
-                        self.get_requests_log[request_id + "__NODE__"].append(node_hash)
-                    # print(f'Count responses = {self.get_requests_log[request_id]["count_responses"]}')
-                    self.get_requests_log[request_id]['count_responses'] += 1
+                    res_state = set(res['state'])
+
+                    # Getting the current state of the replicas and adding it to our accumulator dictionary
+                    for element in res_state:
+                        element = float(element)
+                        if element not in self.get_requests_log[str(request_id)]:
+                            self.get_requests_log[str(request_id)][element] = 0
+                        self.get_requests_log[str(request_id)][element] += 1
                 except Exception as e:
                     print(f"Error in callback: {e}")
-            # print(f'sending requests to {len(replica_nodes)} nodes')
+
             responses = []
+            print(f'Sending get request to {len(replica_nodes)} nodes')
             for node_hash, replica_node in replica_nodes.items():
                 if node_hash != self.range[1]:
-                    # print(f'Sending request to {node_hash}')
-                    conn = rpyc.connect(replica_node.hostname, replica_node.port)
-                    async_func = rpyc.async_(conn.root.get_key)
-                    res = async_func(key, fresh_timestamp, request_id)
-                    res.add_callback(response_callback)
-                    res.set_expiry(self.EXPIRE)
-                    responses.append(res)
+                    try:
+                        conn = rpyc.connect(replica_node.hostname, replica_node.port)
+                        async_func = rpyc.async_(conn.root.get_key)
+
+                        res = async_func(key, request_id)
+                        res.add_callback(response_callback)
+
+                        res.set_expiry(self.EXPIRE)
+                        responses.append(res)
+                    except Exception as e:
+                        print(f'Error in connecting: {e}')
 
             resp = self.wait_for_responses(responses, self.READ)
-            # print(f'wait for responses response = {resp}')
             try:
                 if resp['status'] == self.SUCCESS_STATUS:
-                    # print('success status')        
-                    # if (key_hash >= start and key_hash <= end) or (start > end and (key_hash >= start or key_hash <= end)):
-                    return {"status": self.SUCCESS_STATUS, "value": self.get_requests_log[request_id]['value']}
+                    count = 0
+                    for element, responses in self.get_requests_log[str(request_id)].items():
+                        print(f'element: {element}, responses: {responses}')
+                        # Check if responses received are more than WRITE
+                        if responses >= self.READ:
+                            # If we have add operation, add 1 else subtract 1 in the final result
+                            count += 1 if element > 0 else -1
+                            print(f'value: {count}')
+                    return {"status": self.SUCCESS_STATUS, "value": count}
             except Exception as e:
                 print(f'Error in sending response = {e}')
             
@@ -790,7 +817,9 @@ class Worker(rpyc.Service):
         key_hash = self.hash(key)
         node_keys = sorted(list(self.routing_table.keys()))
         pos = bisect(node_keys, key_hash)
+
         res_routing_table = dict()
+
         for i in range(0, min(len(self.routing_table), self.N)):
             node_hash = node_keys[(pos + i) % len(node_keys)]
             res_routing_table[node_hash] = self.routing_table[node_hash]
@@ -798,7 +827,6 @@ class Worker(rpyc.Service):
                 controller_key = node_hash
         if is_rpc:
             res_routing_table = pickle.dumps(self.serialize(res_routing_table))
-        # print(f'returning routing table')
         return res_routing_table, controller_key
 
         
