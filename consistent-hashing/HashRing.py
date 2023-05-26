@@ -16,48 +16,50 @@ from rpyc.utils.server import ThreadedServer
 from typing import List, Set, Dict, Tuple, Callable, Iterator, Union, Optional, Any, Counter
 
 '''
-nodes_conf: {hostname -> configuration}
-ring: [hashi(hostname) -> (hostname, port, who)]
-vnode: Virtual node count
-hosts: Active host which are used in rings
-keys: List of all keys of vnodes present on the ring: maintain sorted so can binarysearch
-hash_function: str -> int 
-resources : Handle by admin, to add a new resource in teh list
+Description of parameters used
+    1. nodes_conf: {hostname -> configuration}
+    2. ring: [hashi(hostname) -> (hostname, port, who)]
+    3. vnode: Virtual node count
+    4. hosts: Active host which are used in rings
+    5. keys: List of all keys of vnodes present on the ring: maintain sorted so can binarysearch
+    6. hash_function: str -> int 
+    7. resources : Handle by admin, to add a new resource in the list
 '''
 
 class HashRing(rpyc.Service):
     def __init__(self, nodes_conf: List[Dict[str, Any]], spawn_whom:str, **kwargs) -> None:
-        self.hash_function: Callable[[str], str] = (lambda key: int(md5(str(key).encode("utf-8")).hexdigest(), 16))
-        self.ring: Dict[int, Set(Any, Any, Any)] = {} 
-        self.default_vnodes: int = 2
-        self.vnodes: int = kwargs.get("vnodes", self.default_vnodes)
-        self.hosts: Dict[str, Dict[str, Any]] = {}
-        self.keys: List[str] = []
+        self.hash_function:Callable[..., int] = (lambda key: int(md5(string=str(object=key).encode(encoding="utf-8")).hexdigest(), base=16))
+        self.ring: Dict[int, Any] = dict()
+        self.vnodes: int = 2
+        self.hosts: Dict[str, Dict[str, Any]] = dict()
+        self.keys = list()
         self.resources: List[Dict[str, Any]] = nodes_conf 
-        self.spawn_whom = spawn_whom
+        self.spawn_whom: str = spawn_whom
+        ''' Defining constants '''
         self.N = 4
-        # self.make_setup_ready()
+        self.sleep_time = 10
+        self.default_vnodes: int = 2
         self.SPAWN_WORKER_PORT = 4001
 
     def give_hash(self, key: str) -> str:
-        return str(self.hash_function(key))
+        return str(object=self.hash_function(key))
 
-    def initialize_worker(self, conf):        
-        mydir = os.path.dirname(os.path.realpath(__file__))
+    def initialize_worker(self, conf) -> None:        
+        mydir: str = os.path.dirname(os.path.realpath(filename=__file__))
         s = pxssh.pxssh()    
-        dotevn_path = join(dirname(__file__), '.env')
+        dotevn_path: str = join(dirname(p=__file__), '.env')
         load_dotenv(dotevn_path)
         username, hostname = conf['username'], conf['hostname']
-        env_key = "_".join([username.upper(), "_".join(hostname.split('.'))])
+        env_key: str = "_".join([username.upper(), "_".join(hostname.split('.'))])
         print (env_key)
-        password = os.environ.get(env_key)
+        password: str | None = os.environ.get(env_key)
         print (hostname, username, password)
-        uri = f"{username}@{hostname}"
-        s.login(hostname, username, password, sync_multiplier=5, auto_prompt_reset=False)
+        uri: str = f"{username}@{hostname}"
+        s.login(server=hostname, username=username, password=password, sync_multiplier=5, auto_prompt_reset=False)
         s.prompt()
-        s.sendline(f'mkdir -p Dynamo')
+        s.sendline(s=f'mkdir -p Dynamo')
         s.prompt()
-        sp.run(['scp', 'spawn_worker.py', 'worker.py', f'{uri}:~/Dynamo/']).check_returncode()
+        sp.run(args=['scp', 'spawn_worker.py', 'worker.py', f'{uri}:~/Dynamo/']).check_returncode()
         s.sendline(f'redis-cli SHUTDOWN')
         s.prompt()
         s.sendline('nohup redis-server &')
@@ -68,9 +70,9 @@ class HashRing(rpyc.Service):
         print (s.before)
         s.prompt()
         
-    def make_setup_ready(self):
+    def make_setup_ready(self) -> None:
         for conf in self.resources:
-            self.initialize_worker(conf)
+            self.initialize_worker(conf=conf)
 
     '''
     Check the configuration change or existence in the present ring, if even
@@ -96,15 +98,12 @@ class HashRing(rpyc.Service):
     '''
 
     def get_neighbours(self, vnode_hash:str) -> Any:
-        idx = bisect(self.keys, vnode_hash)
-        idx = 0 if (idx == len(self.keys)) else idx
+        idx: int = bisect(a=self.keys, x=vnode_hash)
+        idx: int = 0 if (idx == len(self.keys)) else idx
         return (idx - 1, idx)
 
     def create_ring(self, nodes_conf: List[Dict[str, Any]]) -> None:
-        # TODO: first start all the nodes present in thfe conf
-        # TODO store their hash keys and send the update to the get_host() 
-        # node_Hash -> {hostname, virual name}
-        go_to_ring = {}
+        go_to_ring = dict()
         for node_conf in nodes_conf:
             hostname = node_conf['hostname']
             port = node_conf['port']
@@ -115,13 +114,13 @@ class HashRing(rpyc.Service):
             conn._config['sync_request_timeout'] = None 
             conn.root.spawn_worker(port=node_conf["port"], vnodes=node_conf["vnodes"], spawn_whom=self.spawn_whom)
         
-        time.sleep(10) #TODO: put it to some constant
+        time.sleep(self.sleep_time) 
 
         for vnode_hash, vnode_info in go_to_ring.items():
             # right and left are considered assuming clockwise movement
             # and back of head is always facing center while moving
             hostname, port, who = vnode_info
-            left_idx, right_idx = self.get_neighbours(vnode_hash)
+            left_idx, right_idx = self.get_neighbours(vnode_hash=vnode_hash)
             only_single_node:bool = True
             
             left_node_hash, right_node_hash =  vnode_hash, -1
@@ -146,11 +145,11 @@ class HashRing(rpyc.Service):
 
             print ("----"*5)
             print (f" New: [{int(new_added['start_of_range']) % 10000}, {int(new_added['end_of_range']) % 10000 }, ip:port({new_added['ip']}, {new_added['port']})]")
-            self_url = (hostname, port)
+            self_url:tuple[Any, Any] = (hostname, port)
             try:
                 conn = rpyc.connect(*self_url) 
                 conn._config['sync_request_timeout'] = None 
-                primary, replica_nodes = -1, []
+                primary, replica_nodes = -1, list()
                 if only_single_node == False:
                     primary = self.ring[right_node_hash]
                     for i in range(min(len(self.ring), self.N)):
@@ -161,7 +160,7 @@ class HashRing(rpyc.Service):
 
                 conn.root.init_table(routing_info=response_to_new_node, primary=primary, replica_nodes=replica_nodes)
                 if only_single_node == False:
-                    response_to_right_node = {
+                    response_to_right_node:dict[str, Any] = {
                                     "new_start": str(int(vnode_hash) + 1),
                                     "new_end": str(right_node_hash),
                                     "new_added": new_added
@@ -204,16 +203,16 @@ class HashRing(rpyc.Service):
     '''
      Add a new node in the ring
     '''
-    def exposed_add_node(self, node_conf:List[Dict[str, Any]]) -> None:
-        if self.configure_nodes(node_conf):
-            self.create_ring(node_conf)
+    def exposed_add_node(self, node_conf:List[Dict[str, Any]]) -> Dict:
+        if self.configure_nodes(nodes_conf=node_conf):
+            self.create_ring(nodes_conf=node_conf)
         return {"status": 0, "msg": "success"}
 
     '''
     A generic function to fetch the several property of node configuration
     '''
     def _get(self, key:str, what) -> Any:
-        p = bisect(self.keys, self.give_hash(key)) 
+        p: int = bisect(self.keys, self.give_hash(key=key)) 
         p = 0 if p == len(self.keys) else p
         hostname, port, who = self.ring[self.keys[p]]
         if what == 'hostname': 
@@ -221,15 +220,10 @@ class HashRing(rpyc.Service):
         return self.hosts[hostname][what]
         
     def get_host(self, key:str) -> str:
-        return self._get(key, 'hostname')
-
-    def get_port(self, node_hash:str) -> str: 
-        p = bisect(self.keys, node_hash) 
-        p = 0 if p == len(self.keys) else p 
-
+        return self._get(key=key, what='hostname')
 
     def exposed_get_all_node_location(self, ip:str, virtual_id:str) -> Any:
-        vnode = f'{ip}-{virtual_id}'
+        vnode: str = f'{ip}-{virtual_id}'
         return {"status": 0, "msg": "success", "res": self.ring}
 
     # API for resource grant and revoke
@@ -262,7 +256,7 @@ if __name__ == '__main__':
     spawn_whom:str = types_of_workers[worker_type - 1]
     workers_port:int = 3100 if spawn_whom == 'semantic' else 3000
     print (f"Workers will be spawn for {spawn_whom}\nWorker port: {workers_port}")
-    nodes = [
+    nodes: List[Dict[str, Any]] = [
         {
             'username': 'sourav',
             'hostname': '10.237.27.95',
@@ -278,4 +272,5 @@ if __name__ == '__main__':
     ]
     HashRing_port:int = 3000
     print (f"Hashring started listening on port {HashRing_port}...")
-    ThreadedServer(HashRing(nodes, spawn_whom), hostname='0.0.0.0', port=HashRing_port).start()
+    ThreadedServer(HashRing(nodes_conf=nodes, spawn_whom=spawn_whom), hostname='0.0.0.0', port=HashRing_port).start()
+

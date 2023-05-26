@@ -16,7 +16,7 @@ from bisect import bisect
 from json import JSONEncoder
 from datetime import datetime 
 from rpyc.utils.server import ThreadedServer
-from typing import List, Set, Dict, Tuple, Callable, Iterator, Union, Optional, Any, Counter
+from typing import List, Set, Dict, Tuple, Callable, Iterator, Union, Optional, Any, Counter, Literal, NoReturn
  
 '''
 gossip_data:
@@ -25,14 +25,14 @@ gossip_data:
 '''
 
 class VectorClock:
-    def __init__(self, ip:str, port:int, version_number:int, load:float, start_of_range:int):
-        self.ip:str = ip
-        self.version_number:int = version_number
-        self.load:float = load 
-        self.port:int = port
-        self.start_of_range:str = start_of_range
+    def __init__(self, ip: str, port: int, version_number: int, load: float, start_of_range: int):
+        self.ip: str = ip
+        self.version_number: int = version_number
+        self.load: float = load 
+        self.port: int = port
+        self.start_of_range: int = start_of_range
     
-    #* From vector clock to dict.
+    ''' From vector clock to dict. '''
     def to_dict(self) -> Dict:
         return {
             "ip": self.ip,
@@ -41,8 +41,7 @@ class VectorClock:
             "port": self.port,
             "start_of_range": self.start_of_range 
         }
-    #* From dict to vector clock
-
+    
 
 class Worker(rpyc.Service):
     def __init__(self, port:int, redis_port:int) -> None:
@@ -64,8 +63,8 @@ class Worker(rpyc.Service):
         self.REDIS_WRITE_RETRY:int = 3 # to retry on watch error
         self.REDIS_PORT:int = redis_port 
         self.N = self.READ + self.WRITE - 1# set it properly
-        self.hashmap = f'hash-map-{port}'
-        self.sorted_set = f'sorted-set-{port}' # this is over the keys of hashmap so that efficient search can be made O(logN + m)
+        self.hashmap: str = f'hash-map-{port}'
+        self.sorted_set: str = f'sorted-set-{port}' # this is over the keys of hashmap so that efficient search can be made O(logN + m)
         self.FORMAT = "%Y-%m-%d %H:%M:%S"
         '''
         Locks
@@ -79,10 +78,10 @@ class Worker(rpyc.Service):
         self.port:int = port # port at which this worker node will server
         self.start_of_range:str = "-1" 
         self.end_of_range: str = "-1"
-        self.hash_ring_url = ('10.194.58.46', 3000) # hash ring 
+        self.hash_ring_url: tuple[Literal['10.194.58.46'], Literal[3000]] = ('10.194.58.46', 3000) # hash ring 
         self.routing_table = dict() #* Will store the routing table of active nodes
         self.down_routing_table = dict() #* Will store all those entry which are down now
-        self.hash_function = (lambda key: int(md5(str(key).encode("utf-8")).hexdigest(), 16)) # same hash function is used in hashring
+        self.hash_function: Callable[..., int] = (lambda key: int(md5(string=str(key).encode(encoding="utf-8")).hexdigest(), base=16)) # same hash function is used in hashring
         self.requests_log = dict() # Used by background thread which will keep sending the data to these nodes (to satisfy replica property)
         self.get_requests_log = dict() # response_id -> (fresh_value, fresh_timestamp)
         
@@ -111,16 +110,16 @@ class Worker(rpyc.Service):
         replica_sync_thread.start()
  
 
-    def deserialize(self, routing_table):
-        deserialize_routing_table = {}
+    def deserialize(self, routing_table) -> Dict[Any, Any]:
+        deserialize_routing_table: Dict[Any, Any] = dict()
         for hash, vc in routing_table.items():
             deserialize_routing_table[hash] = VectorClock(ip=vc['ip'],port=vc['port'], 
                                                           version_number=vc["version_number"], 
                                                           load=vc["load"], start_of_range=vc["start_of_range"])
         return deserialize_routing_table
 
-    def serialize(self, routing_table):
-        serialized_routing_table = {}
+    def serialize(self, routing_table) -> Dict[Any, Any]:
+        serialized_routing_table: Dict[Any, Any] = dict()
         for hash, vc in routing_table.items():
             serialized_routing_table[hash] = vc.to_dict()
         return serialized_routing_table
@@ -129,23 +128,23 @@ class Worker(rpyc.Service):
     This function will fetch for which it is now the new primary. Since it is added fresh now.
     '''
 
-    def get_keys_from_redis_by_range(self, start_range, end_range):
+    def get_keys_from_redis_by_range(self, start_range, end_range)-> Tuple[Dict[Any, Any], Dict[Any, Any]]:
         print ("fetching from redis....")
-        res = self.rds.zrangebylex(self.sorted_set, '['+start_range, '['+ end_range)
+        res: list[str] = self.rds.zrangebylex(name=self.sorted_set, min='['+start_range, max='['+ end_range)
         keys_value = dict()
         keys_timestamp = dict() 
         for key in res:
-            key = str(self.rds.get(str(key)))
-            keys_value[key] = str(self.rds.hget(self.hashmap, key))
-            keys_timestamp[key] = str(self.rds.get(key))
+            key = str(self.rds.get(name=str(key)))
+            keys_value[key] = str(self.rds.hget(name=self.hashmap, key=key))
+            keys_timestamp[key] = str(self.rds.get(name=key))
         return keys_value, keys_timestamp
     '''
     This function will be called by new node which will ask for fetching
     the key:value from the neighbour nodes
     '''
-    def exposed_giveback_keys(self, start_range, end_range):
+    def exposed_giveback_keys(self, start_range, end_range) -> Dict[str, Any]:
         try:
-            keys_value, keys_timestamp = self.get_keys_from_redis_by_range(start_range, end_range)
+            keys_value, keys_timestamp = self.get_keys_from_redis_by_range(start_range=start_range, end_range=end_range)
             return {
                     "status": self.SUCCESS, 
                     "keys_value": pickle.dumps(keys_value), 
@@ -163,9 +162,9 @@ class Worker(rpyc.Service):
     is to fetch the keys which it owns and thus It will talk to 
     old primary and secondaries.
     '''
-    def fetch_and_store_keys(self, primary, replica_nodes):
+    def fetch_and_store_keys(self, primary, replica_nodes) -> None:
         print ("\nA NEW NODE IS FETCHING KEYS...")
-        next_nodes = []
+        next_nodes: list[Any] = list()
         if primary == -1:
             print ("First ever node in the ring...")
             return 
@@ -178,7 +177,7 @@ class Worker(rpyc.Service):
                 try:
                     ''' First try to make a contact with primary'''
                     hostname, port, _ = node
-                    url = (hostname, port)
+                    url: Tuple[Any, Any] = (hostname, port)
                     print (f'Fetching from {hostname}, {port}')
                     conn = rpyc.connect(*url) 
                     conn._config['sync_request_timeout'] = 5      
@@ -197,9 +196,9 @@ class Worker(rpyc.Service):
                                 try:
                                     for key, value in keys_value.items():
                                         key_hash = str(self.hash_function(key))
-                                        pipe.hset(self.hashmap, key, value)
-                                        pipe.zadd(self.sorted_set, {key_hash: 1})
-                                        pipe.set(key_hash, key)
+                                        pipe.hset(name=self.hashmap, key=key, value=value)
+                                        pipe.zadd(name=self.sorted_set, mapping={key_hash: 1})
+                                        pipe.set(name=key_hash, value=key)
                                     for key, value in keys_timestamp.items():
                                         pipe.set(key, value)
                                     print ("Succefully bring all the keys")
@@ -222,7 +221,7 @@ class Worker(rpyc.Service):
                 break
         
 
-    def exposed_init_table(self, routing_info, primary, replica_nodes):
+    def exposed_init_table(self, routing_info, primary, replica_nodes) -> None:
         print ("NEW NODE ADDED IN RING...")
         new_added = routing_info['new_added']
         self.routing_table[str(new_added['end_of_range'])] = VectorClock(ip=new_added['ip'],
@@ -230,10 +229,10 @@ class Worker(rpyc.Service):
         load=new_added["load"], start_of_range=new_added["start_of_range"]) 
         self.start_of_range = new_added['start_of_range']
         self.end_of_range = new_added['end_of_range']
-        self.fetch_and_store_keys(primary, replica_nodes) 
+        self.fetch_and_store_keys(primary=primary, replica_nodes=replica_nodes) 
         
         
-    def exposed_update_table(self, routing_info:Dict[Any, Any]):
+    def exposed_update_table(self, routing_info:Dict[Any, Any]) -> None:
         ''' Update your starting point '''
         self.lock_routing_table.acquire()
         self.routing_table[str(self.end_of_range)].start_of_range = routing_info['new_start']
@@ -248,9 +247,9 @@ class Worker(rpyc.Service):
     '''
     This will be background thread which will keep running at some interval
     '''
-    def ping(self, ip, port, timeout = 2):
+    def ping(self, ip, port, timeout = 2) -> bool:
         print (f"pinging.... {ip}:{port}")
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #presumably 
+        sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM) #presumably 
         sock.settimeout(timeout)
         try:
             sock.connect((ip, port))
@@ -262,7 +261,7 @@ class Worker(rpyc.Service):
             sock.close()
             return True
 
-    def ping_thread(self, to_ping):
+    def ping_thread(self, to_ping) -> None:
         # print (f"need to ping: by:{self.port}: nodes = ",  to_ping)
         nodes = set(self.routing_table.keys())
         down_nodes = set(self.down_routing_table.keys())    
@@ -270,7 +269,7 @@ class Worker(rpyc.Service):
             if node in down_nodes:
                 vc = self.down_routing_table[str(node)]
                 ip, port = vc.ip, int(vc.port)
-                response = self.ping(ip, port)
+                response: bool = self.ping(ip=ip, port=port)
                 if response == True:
                     print ("\nREMOVE FROM DOWN NODE: ", node)
                     self.lock_down_routing_table.acquire()
@@ -285,7 +284,7 @@ class Worker(rpyc.Service):
             elif node in nodes: 
                 vc = self.routing_table[str(node)]
                 ip, port = vc.ip, int(vc.port)
-                response = self.ping(ip, port)  
+                response = self.ping(ip=ip, port=port)  
                 if response == False:
                     print ("REMOVING FROM ACTIVE ", node)
                     self.lock_routing_table.acquire()
@@ -300,17 +299,17 @@ class Worker(rpyc.Service):
     '''
     This is a thread which will try to ping self down nodes
     '''
-    def thread_ping_down_node(self):
+    def thread_ping_down_node(self) -> NoReturn:
         while True:
             if (len(self.down_routing_table)):
                 print ("\nPINGING DOWN NODE...")
-                self.ping_thread(list(self.down_routing_table.keys()))
+                self.ping_thread(to_ping=list(self.down_routing_table.keys()))
             time.sleep(self.PING_DOWN_NODE_INTERVAL)
             
     '''
     Start the gossip
     '''
-    def start_gossip(self):
+    def start_gossip(self) -> NoReturn:
         while True: 
             time.sleep(self.GOSSIP_INTERVAL) # Take some rest before gossip
             self.print_routing_table()
@@ -335,12 +334,12 @@ class Worker(rpyc.Service):
                     we are getting what entry we need to udpate
                     '''        
                     ''' Dump both active routing table and down routing table '''
-                    routing_table, down_routing_table = pickle.dumps(self.serialize(self.routing_table)), pickle.dumps(self.serialize(self.down_routing_table))
+                    routing_table, down_routing_table = pickle.dumps(self.serialize(routing_table=self.routing_table)), pickle.dumps(self.serialize(routing_table=self.down_routing_table))
                     ''' After doing chit chat get some gift '''
                     gift_routing_table, gift_down_routing_table, ask_guest_to_ping = conn.root.do_chit_chat(routing_table, down_routing_table)
                     ''' Unwrap the gift '''
-                    gift_routing_table = self.deserialize(pickle.loads(gift_routing_table))
-                    gift_down_routing_table = self.deserialize(pickle.loads(gift_down_routing_table))
+                    gift_routing_table: Dict[Any, Any] = self.deserialize(routing_table=pickle.loads(gift_routing_table))
+                    gift_down_routing_table: Dict[Any, Any] = self.deserialize(routing_table=pickle.loads(gift_down_routing_table))
                     ''' node here represent the hash(or end_of_key)
                     update the outdated entry in both routing and down routing table 
                     update your routing table '''
@@ -367,8 +366,8 @@ class Worker(rpyc.Service):
     and then also wrap gift for the guest, which mean the info which is
     new to the guest
     '''
-    def exposed_replicas_chit_chat(self, start_key_range, end_key_range, guest_keys_value, guest_keys_timestamp):
-        self_keys_value, self_keys_timestamp = self.get_keys_from_redis_by_range(start_key_range, end_key_range)
+    def exposed_replicas_chit_chat(self, start_key_range, end_key_range, guest_keys_value, guest_keys_timestamp) -> Dict[str, Any]:
+        self_keys_value, self_keys_timestamp = self.get_keys_from_redis_by_range(start_range=start_key_range, end_range=end_key_range)
         # print ("---"*10)
         # print (type(self_keys_timestamp), type(self_keys_timestamp))
         # print ("---"*10)
@@ -383,15 +382,15 @@ class Worker(rpyc.Service):
             while True:
                 try:
                     for key, timestamp in guest_keys_timestamp.items():
-                        exits = key in self_keys_timestamp.keys()
-                        depreciated_key = exits and (guest_keys_timestamp[key] > self_keys_timestamp[key])
+                        exits: bool = key in self_keys_timestamp.keys()
+                        depreciated_key: Any | Literal[False] = exits and (guest_keys_timestamp[key] > self_keys_timestamp[key])
                         if depreciated_key:
                             key_hash = str(self.hash_function(key))
                             if (not exits):
-                                pipe.set(key_hash, key)
-                                pipe.zadd(self.sorted_set, {key_hash: 1})
-                            pipe.hset(self.hashmap, key, guest_keys_value[key])
-                            pipe.set(key, timestamp)
+                                pipe.set(name=key_hash, value=key)
+                                pipe.zadd(name=self.sorted_set, mapping={key_hash: 1})
+                            pipe.hset(name=self.hashmap, key=key, value=guest_keys_value[key])
+                            pipe.set(name=key, value=timestamp)
                         else: 
                             if self_keys_timestamp[key] > timestamp:
                                 gift_keys_value[key] = self_keys_value[key]
@@ -434,9 +433,9 @@ class Worker(rpyc.Service):
                     print ("Not enough nodes for replicas to do chit chat")
                     continue
                 nodes = sorted(nodes)
-                my_pos = bisect(nodes, self.start_of_range)
-                boundary = min(len(nodes) - 1, self.N)
-                random_idx = random.randint(1, boundary)
+                my_pos: int = bisect(nodes, self.start_of_range)
+                boundary: int = min(len(nodes) - 1, self.N)
+                random_idx: int = random.randint(1, boundary)
                 start_key_range = self.routing_table[nodes[my_pos - boundary]].start_of_range
                 random_node = end_key_range = nodes[my_pos - random_idx]
                 ip, port = self.routing_table[random_node].ip, self.routing_table[random_node].port
@@ -444,8 +443,8 @@ class Worker(rpyc.Service):
                 conn = rpyc.connect(ip, port)
                 conn._config['sync_request_timeout'] = 10         
         
-                keys_value = pickle.dumps(keys_value)
-                keys_timestamp = pickle.dumps(keys_timestamp)
+                keys_value: bytes = pickle.dumps(keys_value)
+                keys_timestamp: bytes = pickle.dumps(keys_timestamp)
                 res = conn.root.replicas_chit_chat(start_key_range, end_key_range, keys_value, keys_timestamp)
                 if res['status'] == self.SUCCESS:
                     gift_keys_value, gift_keys_timestamp = pickle.loads(res['gift_keys_value']), pickle.loads(res['gift_keys_timestamp'])
@@ -458,10 +457,10 @@ class Worker(rpyc.Service):
                             try: 
                                 for key, value in gift_keys_value.items():
                                     key_hash = str(self.hash_function(key))
-                                    pipe.set(key_hash, key)
-                                    pipe.zadd(self.sorted_set, {key_hash: 1})
-                                    pipe.hset(self.hashmap, key, value)
-                                    pipe.set(key, gift_keys_timestamp[key])
+                                    pipe.set(name=key_hash, value=key)
+                                    pipe.zadd(name=self.sorted_set, mapping={key_hash: 1})
+                                    pipe.hset(name=self.hashmap, key=key, value=value)
+                                    pipe.set(name=key, value=gift_keys_timestamp[key])
                                 pipe.execute()
                                 break 
                             except Exception as e:
@@ -476,11 +475,11 @@ class Worker(rpyc.Service):
     '''
     def exposed_do_chit_chat(self, routing_table, down_routing_table) -> Any:
         ''' Unwrap the gift '''
-        routing_table = self.deserialize(pickle.loads(routing_table))
-        down_routing_table = self.deserialize(pickle.loads(down_routing_table))
+        routing_table: Dict[Any, Any] = self.deserialize(routing_table=pickle.loads(routing_table))
+        down_routing_table: Dict[Any, Any] = self.deserialize(routing_table=pickle.loads(down_routing_table))
         ''' Prepare the gift '''
-        gift_routing_table = {}
-        gift_down_routing_table = {}
+        gift_routing_table: Dict[Any, Any]= dict()
+        gift_down_routing_table: Dict[Any, Any] = dict()
 
         guest_active_nodes = set(list(routing_table.keys()))
         guest_down_nodes = set(list(down_routing_table.keys()))
@@ -492,9 +491,9 @@ class Worker(rpyc.Service):
         If guest have some down keys which are active in mine, I need to tell guest
         to try to ping over those
         '''
-        ask_guest_to_ping = self_active_nodes & guest_down_nodes
+        ask_guest_to_ping: Set[Any] = self_active_nodes & guest_down_nodes
         no_need_to_ask_guest = set()
-        need_to_ping = guest_active_nodes & self_down_nodes
+        need_to_ping: Set[Any] = guest_active_nodes & self_down_nodes
         no_need_to_ping = set()
         '''
         If guest have some active keys which are in my down_keys, 
@@ -525,7 +524,7 @@ class Worker(rpyc.Service):
         If entry is active in both, and I'm the most updated I will send this
         as gift to the guest in routing table
         '''
-        active_in_both = self_active_nodes & guest_active_nodes
+        active_in_both: Set[Any] = self_active_nodes & guest_active_nodes
         for node in active_in_both:
             if routing_table[node].version_number < self.routing_table[node].version_number:
                 gift_routing_table[node] = self.routing_table[node]
@@ -537,7 +536,7 @@ class Worker(rpyc.Service):
         If entry is down in both then, update your if you have stale, if you
         have much updated then ask guest to udpate
         '''
-        down_in_both = self_down_nodes & guest_down_nodes
+        down_in_both: Set[Any] = self_down_nodes & guest_down_nodes
         for node in down_in_both:
             if down_routing_table[node].version_number < self.down_routing_table[node].version_number:
                 gift_down_routing_table[node] = self.down_routing_table[node]
@@ -576,8 +575,8 @@ class Worker(rpyc.Service):
         
             
         ''' wrap the gift'''
-        gift_routing_table = pickle.dumps(self.serialize(gift_routing_table))
-        gift_down_routing_table = pickle.dumps(self.serialize(gift_down_routing_table))
+        gift_routing_table = pickle.dumps(self.serialize(routing_table=gift_routing_table))
+        gift_down_routing_table = pickle.dumps(self.serialize(routing_table=gift_down_routing_table))
         
         print ("done chit-chat")
         return (gift_routing_table, gift_down_routing_table, list(ask_guest_to_ping))
@@ -592,20 +591,20 @@ class Worker(rpyc.Service):
             self_active_nodes = list(self.routing_table.keys())
             self_active_nodes.sort()
             key_hash = str(self.hash_function(key))
-            idx = bisect(self_active_nodes, key_hash)
+            idx: int = bisect(self_active_nodes, key_hash)
             idx = 0 if (idx == len(self_active_nodes)) else idx
             print (f'Len of self active nodes : {len(self_active_nodes)} and accessing index = {idx}')
             if len(self_active_nodes) > 0:
                 controller_node = self_active_nodes[idx]
-                replica_nodes = {}
-                n = len(self_active_nodes)
+                replica_nodes = dict()
+                n: int = len(self_active_nodes)
                 # since it is a ring, we need to do %
                 for pos in range(0, min(len(self_active_nodes), self.N)):
                     node_hash = self_active_nodes[(idx + pos) % n]
                     replica_nodes[node_hash] = self.routing_table[node_hash] 
 
                 if need_serialized:
-                    replica_nodes = pickle.dumps(self.serialize(replica_nodes))
+                    replica_nodes: bytes = pickle.dumps(self.serialize(routing_table=replica_nodes))
                 print ("SENDING ROUTING TABLE")
                 return replica_nodes, controller_node
         except Exception as e:
@@ -628,7 +627,7 @@ class Worker(rpyc.Service):
     '''
     def exposed_replicated_put(self, key, value, request_id, timestamp):
         print (f"Replica are called on {self.ip}, {self.port} for put..{key} = {value}")
-        node = self.end_of_range
+        node: str = self.end_of_range
         unique_key: str = f'{key}_{self.port}' # BUG FIX: included port, since we are using common redis list earlier 
         value_to_append: float = value * timestamp # capture both +/- along with timestamp 
         with self.rds.pipeline() as pipe:
@@ -654,7 +653,7 @@ class Worker(rpyc.Service):
     of unnecessary calls
     '''
 
-    def wait_for_responses(self, responses, required, called_by=""):
+    def wait_for_responses(self, responses, required, called_by="") -> Dict[str, int]:
         print ("Waiting for responses...")
         while True:
             count_success_responses = 0
@@ -682,12 +681,12 @@ class Worker(rpyc.Service):
                 
         print ("Done with waiting for reponses")
 
-    def replicate(self):
+    def replicate(self) -> NoReturn:
         while True:
             time.sleep(self.REPLICATED_TIMEOUT)
             print ("Replicate called")
             piggy_backing = dict() 
-            stop_retrying = [] # store all those nodes whose retry count reached zero
+            stop_retrying: List[Any] = list() # store all those nodes whose retry count reached zero
             for request_id, replicas in self.requests_log.items():
                 key, value, timestamp =  self.requests_log[request_id]['info']
                 for node, status in replicas.items():
@@ -713,7 +712,7 @@ class Worker(rpyc.Service):
             Used to approve success and ignored request so that they 
             can be removed from the self.requests_log
             '''
-            def callback(res):
+            def callback(res) -> None:
                 # print (f"Callback called for replicating...{res}")
                 success_requests, ignored_requests, node = res 
                 
@@ -726,7 +725,7 @@ class Worker(rpyc.Service):
             '''
             Do a rpyc call to send the piggyback
             '''
-            responses = []
+            responses: list[Any] = list()
             for node, requests in piggy_backing.items():
                 ip, port = self.routing_table[node].ip, self.routing_table[node].port
                 conn = rpyc.connect(ip, port)
@@ -737,13 +736,13 @@ class Worker(rpyc.Service):
                 responses.append(res) 
 
             
-            waiting = self.wait_for_responses(responses, len(responses), 'replicate')
+            waiting: Dict[str, int] = self.wait_for_responses(responses=responses, required=len(responses), called_by='replicate')
             print (f'Waiting status: {waiting}')
     '''
     This is used by piggybacks so that put can be handled for mutiple
     key, values which are going to the same node
     '''
-    def exposed_bulk_put(self, requests):
+    def exposed_bulk_put(self, requests)-> Tuple[List[Any], List[Any], str]:
         # print (f"Bulk of request arrived: {requests}")
         success_requests, ignored_requests = [], []
         for request in requests:
@@ -763,19 +762,19 @@ class Worker(rpyc.Service):
 
     '''
 
-    def exposed_get_key(self, key, request_id):
+    def exposed_get_key(self, key, request_id) -> Dict[str, Any]:
         print ('--' * 5, "Someone need get info", '--' * 5)
         unique_key: str = f'{key}_{self.port}'
         #!FIXME: add exception hadling please...
         return {
-            "state": self.rds.lrange(unique_key, 0, -1),
+            "state": self.rds.lrange(name=unique_key, start=0, end=-1),
             "request_id": request_id,
             "node": self.end_of_range,
             "status": self.SUCCESS
         }
 
-    def make_request_id(self, key):
-        timestamp = time.time()
+    def make_request_id(self, key)-> Tuple[str, float]:
+        timestamp: float = time.time()
         now = str(timestamp)
         request_id = str(self.hash_function(now + str(key)))
         return request_id, timestamp 
@@ -786,11 +785,11 @@ class Worker(rpyc.Service):
     '''
     def exposed_get(self, key, allow_replicas=False):
         print (f"GET CALLED FOR KEY = {key}")
-        request_id, _ = self.make_request_id(key)
+        request_id, _ = self.make_request_id(key=key)
         start, end = self.start_of_range, self.end_of_range
         replica_nodes, controller_node = self.exposed_fetch_routing_info(key=key, need_serialized=False)
         key_hash = str(self.hash_function(key))
-        correct_node = ((start > end and (key_hash >= start or key_hash <= end)) or (start <= key_hash and key_hash < end))
+        correct_node: bool = ((start > end and (key_hash >= start or key_hash <= end)) or (start <= key_hash and key_hash < end))
         
         unique_key: str = f'{key}_{self.port}'
         
@@ -799,7 +798,7 @@ class Worker(rpyc.Service):
             if request_id not in self.get_requests_log:
                 self.get_requests_log[request_id] = dict()
             # query from redis
-            self_state = self.rds.lrange(unique_key, 0, -1) 
+            self_state = self.rds.lrange(name=unique_key, start=0, end=-1) 
             self_state = [float(s) for s in self_state]
             print (f'Self state in get: {self_state}')
 
@@ -810,7 +809,7 @@ class Worker(rpyc.Service):
             Callback with the async call raised for all the rest nodes
             So that we can have some sort of weak consensus (typically << N / 2)
             '''
-            def callback(response):
+            def callback(response) -> None:
                 try:
                     res = response.value
                     if (res == None):
@@ -832,7 +831,7 @@ class Worker(rpyc.Service):
                 except Exception as e:
                     print ("Something bad happen in exposed_get ", e)
 
-            responses = []
+            responses: List[Any] = list()
             for node in replica_nodes:
                 if node in self.routing_table.keys():
                     try:
@@ -847,7 +846,7 @@ class Worker(rpyc.Service):
                         print (f'Fetching response and something bad happen {e}')
             
             print ("Waiting for get...")
-            waiting = self.wait_for_responses(responses, self.READ, 'GET')
+            waiting: Dict[str, int] = self.wait_for_responses(responses=responses, required=self.READ, called_by='GET')
             print ("Wait done {waiting}..")
             final_state = 0
             try:
@@ -886,7 +885,7 @@ class Worker(rpyc.Service):
         key_hash = str(self.hash_function(key)) # to locate the key in the ring
         start, end = self.start_of_range, self.end_of_range 
         replica_nodes, controller_node = self.exposed_fetch_routing_info(key=key, need_serialized=False)
-        correct_node = ((start > end and (key_hash >= start or key_hash <= end)) or (start <= key_hash and key_hash < end))
+        correct_node: bool = ((start > end and (key_hash >= start or key_hash <= end)) or (start <= key_hash and key_hash < end))
         # Data to be stored unique_key.append(value) : value magically store timestamp with the sign of value
         unique_key: str = f'{key}_{self.port}'
         value_to_append: float = value * timestamp
@@ -918,7 +917,7 @@ class Worker(rpyc.Service):
             then it will simply add 
             '''
             ''' This is a callback function used by async thread. '''
-            def callback(response):
+            def callback(response) -> None:
                 try:
                     res = response.value
                     request_id = res['request_id']
@@ -961,7 +960,7 @@ class Worker(rpyc.Service):
             we are free to repsonse to the client for their write
             and our background thread will try to make it to write to N replicas
             '''
-            waiting = self.wait_for_responses(responses, self.WRITE, 'PUT') 
+            waiting = self.wait_for_responses(responses=responses, required=self.WRITE, called_by='PUT') 
 
             if waiting['status'] == self.SUCCESS:
                 return {"status": self.SUCCESS, 
@@ -982,5 +981,5 @@ if __name__ == '__main__':
     port: int = int(sys.argv[1])
     redis_port: int = 6379
     print (f"Listenting semantic worker at {port}...")
-    ThreadedServer(Worker(port, redis_port), hostname='0.0.0.0', port=port, protocol_config={'allow_public_attrs': True}).start()
+    ThreadedServer(Worker(port=port, redis_port=redis_port), hostname='0.0.0.0', port=port, protocol_config={'allow_public_attrs': True}).start()
     

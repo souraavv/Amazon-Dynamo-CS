@@ -11,6 +11,8 @@ from bisect import bisect
 from pprint import pprint
 from datetime import timedelta, datetime
 from rpyc.utils.server import ThreadedServer
+from typing import List, Set, Dict, Tuple, Callable, Iterator, Union, Optional, Any, Counter, Literal, NoReturn
+
 
 class VectorClock:
     def __init__(self, ip:str, port:int, version_number:int, load:float, start_of_range:int) -> None:
@@ -18,7 +20,7 @@ class VectorClock:
         self.version_number:int = version_number
         self.load:float = load 
         self.port:int = port
-        self.start_of_range:str = start_of_range
+        self.start_of_range = start_of_range
         
     def to_dict(self) -> Dict:
         return {
@@ -31,13 +33,14 @@ class VectorClock:
 
 class Client(rpyc.Service):
     def __init__(self, nodes) -> None:
-        self.nodes = nodes #* In future when some service reply this then we can cache this too
+        self.nodes: Any = nodes #* In future when some service reply this then we can cache this too
         self.cache = dict() #* will store the routing table for some time.
         ''' Key to Controller node hash (or id)'''
         self.locate_key = dict()
         ''' #!FIXME: Will contians the version number of keys in case of semantic'''
         
-        self.all_nodes = []#* node hash -> (vector clock(ip, port, ...), last_update_time)
+        ''' node hash -> (vector clock(ip, port, ...), last_update_time) ''' 
+        self.all_nodes = list()
         ''' Universal constant/configure by users'''
         self.CACHE_TIMEOUT = 15
         self.READ = 3
@@ -51,7 +54,9 @@ class Client(rpyc.Service):
         self.IGNORE:int = 1
         self.EXPIRE:int = 3
         self.INVALID_RESOURCE = 4
-
+        ''' IF there is unknown '''
+        self.FIVE_STAR = 100 
+        
         ''' Threads '''
         self.cache_lock = threading.Lock()
         self.cache_thread = threading.Thread(target=self.thread_clean_cache, args=(), daemon=True)
@@ -61,12 +66,12 @@ class Client(rpyc.Service):
     since we are maintaining multiple level of indirection, through self.locate_key -> self.all_nodes
     and then self.cache, we need to remove those carefully
     '''
-    def thread_clean_cache(self):
+    def thread_clean_cache(self) -> NoReturn:
         print ("THREAD CALLED FOR CLEANING CACHE...")
         while True: 
             time.sleep(self.CACHE_TIMEOUT)
-            stale_entries = []
-            curr_time = time.time()
+            stale_entries: list[Any] = list()
+            curr_time: float = time.time()
             for node, vc in self.cache.items():
                 if curr_time - self.cache[node].updated_time > self.CACHE_TIMEOUT:
                     stale_entries.append(node)
@@ -76,15 +81,15 @@ class Client(rpyc.Service):
                 del self.cache[stale]
             self.cache_lock.release()
 
-    def deserialize(self, response):
-        deserialize_response = {}
+    def deserialize(self, response)-> Dict[Any, Any]:
+        deserialize_response: Dict[Any, Any] = dict()
         for hash, vc in response.items():
             deserialize_response[hash] = VectorClock(ip=vc['ip'],port=vc['port'], 
                 version_number=vc["version_number"], 
                 load=vc["load"], start_of_range=vc["start_of_range"])    
         return deserialize_response
 
-    def serialize(self, response):
+    def serialize(self, response)-> List[Any]:
         serialized_response:list = list()
         for hash, vc in response.items():
             serialized_response[hash] = vc.to_dict()
@@ -96,9 +101,9 @@ class Client(rpyc.Service):
         1) normal case when the node corresponsing to key is not present
         2) When we got self.INVALID_RESOURCE
     '''
-    def update_cache(self, key, replica_nodes, controller_node):
+    def update_cache(self, key, replica_nodes, controller_node) -> None:
         print ("Updating cache...")
-        curr_time = time.time()
+        curr_time: float = time.time()
         self.locate_key[key] = controller_node 
         for node_hash, vc in replica_nodes.items():
             if node_hash in self.cache.keys():
@@ -116,18 +121,18 @@ class Client(rpyc.Service):
     '''
     This function will fetch the routing table from some random node from self.nodes list
     '''
-    def get_routing_info(self, key):
+    def get_routing_info(self, key) -> None:
         while True:
             try:
-                node = random.randint(0, len(self.nodes) - 1)
-                who = random.randint(0, self.nodes[node]["vnodes"] - 1)
+                node: int = random.randint(0, len(self.nodes) - 1)
+                who: int = random.randint(0, self.nodes[node]["vnodes"] - 1)
                 #!FIXME: don't iterate on nodes
                 url = (self.nodes[node]["ip"], int(self.nodes[node]["port"]) + who)
                 conn = rpyc.connect(*url)
                 conn._config['sync_request_timeout'] = 15
                 replica_nodes, controller_node = conn.root.fetch_routing_info(key)
-                replica_nodes = self.deserialize(pickle.loads(replica_nodes))
-                self.update_cache(key, replica_nodes, controller_node)
+                replica_nodes = self.deserialize(response=pickle.loads(replica_nodes))
+                self.update_cache(key=key, replica_nodes=replica_nodes, controller_node=controller_node)
                 break
             except Exception as e:
                 print (f"Some thing bad happened while fetching routing info...{e}")
@@ -143,7 +148,7 @@ class Client(rpyc.Service):
     '''
 
     def cache_is_stale(self, key) -> bool:
-        curr_time = time.time()
+        curr_time: float = time.time()
         if key not in self.locate_key:
             return True
         elif key in self.locate_key:
@@ -157,12 +162,12 @@ class Client(rpyc.Service):
     for the given key
     '''
     def get_key_containing_nodes(self, key):
-        if self.cache_is_stale(key): # Fetch in case it is not there.
-            self.get_routing_info(key)
+        if self.cache_is_stale(key=key): # Fetch in case it is not there.
+            self.get_routing_info(key=key)
         controller_node = self.locate_key[key]
-        controller_node_idx = bisect(self.all_nodes, controller_node)
+        controller_node_idx: int = bisect(self.all_nodes, controller_node)
         controller_node_idx = controller_node_idx - 1 if controller_node_idx else 0 
-        n = len(self.all_nodes)
+        n: int = len(self.all_nodes)
         print (f'Len = {n} and self.N = {self.N}')
         key_contained_by = []
         #* Since it is a ring, not a linear chain, we need to do %
@@ -171,7 +176,7 @@ class Client(rpyc.Service):
         return controller_node, key_contained_by
 
 
-    def getNodes(self, key_contained_by):
+    def getNodes(self, key_contained_by) -> None:
         for node in key_contained_by:
             try:
                 vc = self.cache[node]['vector_clock'] 
@@ -184,21 +189,21 @@ class Client(rpyc.Service):
         Talk to relevant nodes and then get the final output
         Write the logic to read now, based on concillation algo.
     '''
-    def exposed_get(self, key):
+    def exposed_get(self, key)-> Dict[str, Any]:
         print ("GET is called!")
-        controller_node, key_contained_by = self.get_key_containing_nodes(key)
+        controller_node, key_contained_by = self.get_key_containing_nodes(key=key)
         retry_count:int = 0
         while retry_count < self.RETRIES:
             print (f"Retrying ... {retry_count + 1}" )
-            self.getNodes(key_contained_by)            
+            self.getNodes(key_contained_by=key_contained_by)            
             retry_count += 1
-            break_reason = ''
+            break_reason: int = self.FIVE_STAR # Invalid break reason
             res = None
             for node in key_contained_by:
                 try:
                     allow_replicas = (node != controller_node) 
                     vc = self.cache[node]['vector_clock'] 
-                    url = (vc.ip, vc.port) 
+                    url: Tuple[Any, Any] = (vc.ip, vc.port) 
                     conn = rpyc.connect(*url)
                     print (f'=================')
                     pprint (f"IP : {vc.ip} and PORT: {vc.port}")
@@ -217,7 +222,7 @@ class Client(rpyc.Service):
                     print ("Some thing bad happen in get ", e)
                     pass 
             if break_reason == self.INVALID_RESOURCE: 
-                self.update_cache(key, res["replica_nodes"], res["controller_node"])
+                self.update_cache(key=key, replica_nodes=res["replica_nodes"], controller_node=res["controller_node"])
             else:
                 break
         return {"status": self.FAILURE, "msg": "Fail in get!"}
@@ -226,14 +231,14 @@ class Client(rpyc.Service):
         Write the logic to write now
         We need this service to be mostly say ok to client
     '''
-    def exposed_put(self, key, value):
+    def exposed_put(self, key, value) -> Dict[str, Any]:
         print (f"PUT IS CALLED: {key}, {value}")
         retry_count:int = 0
         
         while retry_count < self.RETRIES:
-            controller_node, key_contained_by = self.get_key_containing_nodes(key)
+            controller_node, key_contained_by = self.get_key_containing_nodes(key=key)
             print (f"Retrying ... {retry_count + 1}" )
-            self.getNodes(key_contained_by)            
+            self.getNodes(key_contained_by=key_contained_by)            
             
             retry_count += 1
             break_reason = ''
@@ -262,7 +267,7 @@ class Client(rpyc.Service):
                     print ("Expection in client put", e)
                     pass 
             if break_reason == self.INVALID_RESOURCE: 
-                self.update_cache(key, res["replica_nodes"], res["controller_node"])
+                self.update_cache(key=key, replica_nodes=res["replica_nodes"], controller_node=res["controller_node"])
         return {"status": self.FAILURE, "msg": "Fail in PUT!"}
 
 if __name__ == '__main__':
@@ -270,7 +275,7 @@ if __name__ == '__main__':
     #TODO: Later move these to some service provided by Hashring or some 
     #TODO: complete independent service also ok.
 
-    nodes = [
+    nodes: List[Dict[str, Any]] = [
         {
             'username': 'sourav',
             'ip': '10.237.27.95',
@@ -285,4 +290,4 @@ if __name__ == '__main__':
         }
     ]
     print (f"Client is listening at port = {port}...")
-    ThreadedServer(Client(nodes), hostname='0.0.0.0', port=port).start()
+    ThreadedServer(Client(nodes=nodes), hostname='0.0.0.0', port=port).start()
