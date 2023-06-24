@@ -149,6 +149,9 @@ Reconciliation : Yes working
 ### Additional
 This is for visuals (but still pending). Live pie chart showing the distribution (range of keys) hold by each node and number of data fields on each node
 
+## How to use this toy Dynamo (Setup)
+
+
 
 ## Acknowledgement
 We want to thanks Prof. Abhilash Jindal (IIT Delhi). Most of our learning and motivation to build this 
