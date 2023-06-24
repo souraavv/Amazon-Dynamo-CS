@@ -154,7 +154,7 @@ This is for visuals (but still pending). Live pie chart showing the distribution
 
 
 ## Acknowledgement
-We want to thanks Prof. Abhilash Jindal (IIT Delhi). Most of our learning and motivation to build this 
+We want to thanks [Prof. Abhilash Jindal (IIT Delhi)](https://abhilash-jindal.com/). Most of our learning and motivation to build this 
 comes from his course Fundamentals of Cloud Computing.
 
 ## Reference
