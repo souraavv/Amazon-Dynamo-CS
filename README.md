@@ -155,7 +155,7 @@ This is for visuals (but still pending). Live pie chart showing the distribution
 
 ## Acknowledgement
 We want to thanks [Prof. Abhilash Jindal (IIT Delhi)](https://abhilash-jindal.com/). Most of our learning and motivation to build this 
-comes from his course Fundamentals of Cloud Computing.
+comes from his course [Fundamentals of Cloud Computing](http://abhilash-jindal.com/teaching/2021-2-col-733/).
 
 ## Reference
 1. [Dynamo: Amazon’s Highly Available Key-value Store](https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf)
