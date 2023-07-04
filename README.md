@@ -1,12 +1,19 @@
 # Toy Dynamo
 
 ## Introduction
-Dynamo is a powerful and versatile distributed data storage system that was developed by Amazon Web Services (AWS). It is designed to provide scalability, high availability, and low latency for applications that require consistent, single-digit millisecond response times, even as the workload grows. 
+Dynamo is a powerful and versatile distributed data storage system that was developed by Amazon Web Services (AWS). It is designed to provide scalability, high availability, and low latency for applications that require consistent, single-digit millisecond response times, even as the workload grows. Dynamo is a simple key-value store, used in prouduction environment at Amazon's. Most of Amazon's application do not need th efull power of SQL queries and thus Amazon want doesn't want to pursue traditional ACID semantics
 
-## Goal
-Build a reliable, decentralised, highly available, strong, eventually consistent, and low-latency read/write storage system.
+## Learning Goal
+- Reliable
+- Decentralised
+- Highly available
+- Strong eventually consistent
+- Quorum systems
+- Low-latency read/write storage system.
 
-We have designed a toy version of the Dynamo which provides some basic features. The main goal was to go through the process of designing a storage system which is highly scalable, fault tolerant and available. 
+We have designed a toy version of the Dynamo i.e *DynamoCS* which provides some basic features. The main goal was to go through the process of designing a storage system which is highly scalable, fault tolerant and available. 
+
+This also help us in learning trade-offs in messy real-world systems
 
 ## Basic Assumptions
 1. Items are uniquely identified by key
@@ -43,6 +50,9 @@ Used in building a decentralised routing table, where each node will contain the
 [(node(ip), virutal_id, Range of keys, current_load, version_number), …  ]
 ```
 
+![Nodes on ring](./assets/ring.jpg)
+*Fig1: Nodes on the ring*
+
 ### Consistent hashing
 
 Consistent hashing is a technique used in distributed systems to efficiently and consistently distribute data across multiple nodes in a way that minimizes data movement and rebalancing when nodes are added or removed from the system.
@@ -50,6 +60,8 @@ Consistent hashing is a technique used in distributed systems to efficiently and
 In consistent hashing, a hash function is used to map data items and nodes onto a fixed-size identifier space, typically a ring or a circle. Each data item is assigned a unique identifier based on its key, and each node is assigned one or more identifiers based on its address or some other criteria. The identifier space is divided into smaller regions or partitions, with each node responsible for storing and handling the data items within its assigned partitions.
 
 The key idea of consistent hashing is that when a node is added or removed from the system, only a small fraction of the data needs to be remapped to new nodes. By using the hash function, data items are consistently mapped to the nearest node in the identifier space, making it easier to locate and retrieve the data without requiring a centralized index or lookup table.
+
+Although using consistent hashing makes reconcillation harder (must recompute Merkle trees) and also makes snapshots harder. But we decided to go with this challenging path. Other choice is to split ring into fixed, equal size arcs/segments. Use many more segments than there are nodes
 
 #### Design choice we followed.
 1. We can assign the nodes random positions only on the virtual ring. The distribution of the virtual nodes should be uniform such that each N node pair belongs to N different physical nodes.
@@ -79,7 +91,17 @@ For each key in the Redis, we will maintain a version number
 4. Also, share the next max(R, W) nodes IP and ports to the new node so that it can fetch the data and reconcile.
 
 
+## What is "quorum technique" ?
+If you care about linearizability and you store a value on N servers. Write must reach some write-set of W server before you say write is complete. Read must be heared from some R servers before being called complete. 
+
+- Guarantees a reader will see effects of a previously complted write
+- An easy way to ensure this is to R + W > N
+- With N fixed nodes, read will always hear one copy of successful write.
+
 ## List of challenges which we faced
+
+![Tradeoff](./assets/problems_and_techniques.jpg)
+*Table 1: Problems and Techinques*
 
 ### Challenge 1: How to handle updates to the routing table; insertion is simple. How to handle the removal of an entry? 
 We made two routing tables. One will store all the down nodes and other will store all the up nodes. So we are not completely throwing out nodes, in case the system is partially down or there is network partition between two nodes. This will also allow us to periodically ping all those down nodes to check if they are up.
@@ -146,7 +168,7 @@ For developing the service fault-tolerant, we go with replicas, and for a write-
 Testing Phase : Did basic testing
 Reconciliation : Yes working
 
-### Additional
+### Additions
 This is for visuals (but still pending). Live pie chart showing the distribution (range of keys) hold by each node and number of data fields on each node
 
 ## How to use this toy Dynamo (Setup)
