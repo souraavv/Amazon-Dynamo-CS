@@ -105,7 +105,7 @@ If you care about linearizability and you store a value on N servers. Write must
 
 ![Tradeoff](./assets/problems_and_techniques.jpg)
 
-*Table 1: Problems and Techinques*
+*Table 1: Problems and Techinques (A sample from the original paper)*
 
 ### Challenge 1: How to handle updates to the routing table; insertion is simple. How to handle the removal of an entry? 
 We made two routing tables. One will store all the down nodes and other will store all the up nodes. So we are not completely throwing out nodes, in case the system is partially down or there is network partition between two nodes. This will also allow us to periodically ping all those down nodes to check if they are up.
