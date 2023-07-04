@@ -62,7 +62,9 @@ In consistent hashing, a hash function is used to map data items and nodes onto 
 
 The key idea of consistent hashing is that when a node is added or removed from the system, only a small fraction of the data needs to be remapped to new nodes. By using the hash function, data items are consistently mapped to the nearest node in the identifier space, making it easier to locate and retrieve the data without requiring a centralized index or lookup table.
 
-Although using consistent hashing makes reconcillation harder (must recompute Merkle trees) and also makes snapshots harder. But we decided to go with this challenging path. Other choice is to split ring into fixed, equal size arcs/segments. Use many more segments than there are nodes
+Although using consistent hashing makes reconcillation harder (must recompute Merkle trees) and also makes snapshots harder. But we decided to go with this challenging path. Other choice is to split ring into fixed, equal size arcs/segments. Use many more segments than there are nodes i.e (# partitions >> # servers)
+
+Author of paper [1] tried it first, even though simpler techniques better.
 
 #### Design choice we followed.
 1. We can assign the nodes random positions only on the virtual ring. The distribution of the virtual nodes should be uniform such that each N node pair belongs to N different physical nodes.
