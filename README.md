@@ -51,6 +51,7 @@ Used in building a decentralised routing table, where each node will contain the
 ```
 
 ![Nodes on ring](./assets/ring.jpg)
+
 *Fig1: Nodes on the ring*
 
 ### Consistent hashing
@@ -101,6 +102,7 @@ If you care about linearizability and you store a value on N servers. Write must
 ## List of challenges which we faced
 
 ![Tradeoff](./assets/problems_and_techniques.jpg)
+
 *Table 1: Problems and Techinques*
 
 ### Challenge 1: How to handle updates to the routing table; insertion is simple. How to handle the removal of an entry? 
