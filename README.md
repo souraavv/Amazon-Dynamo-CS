@@ -34,13 +34,13 @@ This also help us in learning trade-offs in messy real-world systems
 10. Reconcile algorithm (Semantic reconciliation + Syntactic reconciliation)
 11. Merkle tree (adv need during semantic reconciliation) (not implemenated)
 
-## Client operations or System admin operation
+## Client operations/System admin operations
 1. Perform read/write: get() and put()
 2. Can tell the replication factor (f)
 3. Number of nodes to use for the service and number of virtual nodes 
 
 ## Tech stack used
-Python, RpyC and Redis
+Python (>=3.8), RpyC and Redis
 
 ## Approach
 
