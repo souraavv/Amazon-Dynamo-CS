@@ -1,9 +1,9 @@
-# Toy Dynamo
+# DynamoCS: A toy version of Amazon's Dynamo
 
 ## Introduction
-Dynamo is a powerful and versatile distributed data storage system that was developed by Amazon Web Services (AWS). It is designed to provide scalability, high availability, and low latency for applications that require consistent, single-digit millisecond response times, even as the workload grows. Dynamo is a simple key-value store, used in prouduction environment at Amazon's. Most of Amazon's application do not need th efull power of SQL queries and thus Amazon want doesn't want to pursue traditional ACID semantics
+Amazon's Dynamo is a powerful and versatile distributed data storage system that was developed by Amazon Web Services (AWS). It is designed to provide scalability, high availability, and low latency for applications that require consistent, single-digit millisecond response times, even as the workload grows. Dynamo is a simple key-value store, used in prouduction environment at Amazon's. Most of Amazon's application do not need th efull power of SQL queries and thus Amazon want doesn't want to pursue traditional ACID semantics
 
-## Learning Goal
+## Learning Goals
 - Reliable
 - Decentralised
 - Highly available
@@ -155,7 +155,7 @@ In case if we are not able to write to the secondary, then only we should go to 
 #### 2. Can we be allowed to read from secondary?
 Maybe ? (if consensus allow). We actually allowed
 
-## Building highly scalable & reliable services over Dynamo
+## Building highly scalable & reliable services over *DynamoCS*
 #### Amazon shopping cart / Like count on an instagram post
 `Key(item_id)` : Represent the unique id of the item 
 Value: Represent the quantity of the item purchased (+/-)
@@ -173,7 +173,7 @@ Reconciliation : Yes working
 ### Additions
 This is for visuals (but still pending). Live pie chart showing the distribution (range of keys) hold by each node and number of data fields on each node
 
-## How to use this toy Dynamo (Setup)
+## How to use this *DynamoCS* (Setup)
 
 
 
