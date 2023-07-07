@@ -3,6 +3,7 @@ import copy
 import rpyc 
 import time 
 import redis
+import logging 
 import subprocess
 import subprocess as sp
  
@@ -14,6 +15,8 @@ from dotenv import load_dotenv
 from os.path import join, dirname
 from rpyc.utils.server import ThreadedServer
 from typing import List, Set, Dict, Tuple, Callable, Iterator, Union, Optional, Any, Counter
+
+logging.basicConfig(level=logging.DEBUG)
 
 '''
 Description of parameters used
@@ -51,9 +54,9 @@ class HashRing(rpyc.Service):
         load_dotenv(dotevn_path)
         username, hostname = conf['username'], conf['hostname']
         env_key: str = "_".join([username.upper(), "_".join(hostname.split('.'))])
-        print (env_key)
+        logging.debug (env_key)
         password: str | None = os.environ.get(env_key)
-        print (hostname, username, password)
+        logging.debug (hostname, username, password)
         uri: str = f"{username}@{hostname}"
         s.login(server=hostname, username=username, password=password, sync_multiplier=5, auto_prompt_reset=False)
         s.prompt()
@@ -67,7 +70,7 @@ class HashRing(rpyc.Service):
         s.sendline(f'redis-cli flushall')
         s.prompt()
         s.sendline('cd Dynamo && python3 spawn_worker.py')
-        print (s.before)
+        logging.debug (s.before)
         s.prompt()
         
     def make_setup_ready(self) -> None:
@@ -143,8 +146,8 @@ class HashRing(rpyc.Service):
                             "new_added": new_added
                         }
 
-            print ("----"*5)
-            print (f" New: [{int(new_added['start_of_range']) % 10000}, {int(new_added['end_of_range']) % 10000 }, ip:port({new_added['ip']}, {new_added['port']})]")
+            logging.debug ("----"*5)
+            logging.debug (f" New: [{int(new_added['start_of_range']) % 10000}, {int(new_added['end_of_range']) % 10000 }, ip:port({new_added['ip']}, {new_added['port']})]")
             self_url:tuple[Any, Any] = (hostname, port)
             try:
                 conn = rpyc.connect(*self_url) 
@@ -167,19 +170,19 @@ class HashRing(rpyc.Service):
                                 }
                 
                     if response_to_right_node["new_start"] == response_to_new_node["new_start"]:
-                        print ("--------------  They are same ------------------")
+                        logging.debug ("--------------  They are same ------------------")
                     right_ip, right_port, _ = self.ring[self.keys[right_idx]]
-                    print (f" Already: [{int(response_to_right_node['new_start']) % 1000 }, {int(response_to_right_node['new_end']) % 1000}, ip:port({right_ip}, {right_port})]")
-                    print (self.keys[right_idx])
+                    logging.debug (f" Already: [{int(response_to_right_node['new_start']) % 1000 }, {int(response_to_right_node['new_end']) % 1000}, ip:port({right_ip}, {right_port})]")
+                    logging.debug (self.keys[right_idx])
                     right_url = (right_ip, right_port)
                     conn = rpyc.connect(*right_url) 
                     conn._config['sync_request_timeout'] = None 
                     conn.root.update_table(response_to_right_node)
             except Exception as e:
-                print ("Some thing bad happend in ring ", e)
+                logging.debug ("Some thing bad happend in ring ", e)
             self.ring[vnode_hash] = vnode_info #add to ring
             self.keys = sorted(self.ring.keys()) #sort the keys
-            print ("----"*5)
+            logging.debug ("----"*5)
         self.keys = sorted(self.ring.keys())
 
     '''
@@ -250,12 +253,12 @@ class HashRing(rpyc.Service):
 if __name__ == '__main__':
     types_of_workers:list = ['semantic', 'syntactic']
     worker_type: int = int(input('Which worker you want to initialize ? \n1. Semantic:: Suitable for in-general key-value store\n2. Syntactic::Suitable for username & password\nEnter response(1/2): '))
-    print (worker_type)
+    logging.debug (worker_type)
     if (worker_type != 1) and (worker_type != 2):
         raise ValueError('Invalid argument provided, please provide 1 or 2')
     spawn_whom:str = types_of_workers[worker_type - 1]
     workers_port:int = 3100 if spawn_whom == 'semantic' else 3000
-    print (f"Workers will be spawn for {spawn_whom}\nWorker port: {workers_port}")
+    logging.debug (f"Workers will be spawn for {spawn_whom}\nWorker port: {workers_port}")
     nodes: List[Dict[str, Any]] = [
         {
             'username': 'sourav',
@@ -271,6 +274,6 @@ if __name__ == '__main__':
         }
     ]
     HashRing_port:int = 3000
-    print (f"Hashring started listening on port {HashRing_port}...")
+    logging.debug (f"Hashring started listening on port {HashRing_port}...")
     ThreadedServer(HashRing(nodes_conf=nodes, spawn_whom=spawn_whom), hostname='0.0.0.0', port=HashRing_port).start()
 

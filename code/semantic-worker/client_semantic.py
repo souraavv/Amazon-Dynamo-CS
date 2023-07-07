@@ -4,7 +4,9 @@ import math
 import time
 import pickle
 import random
+import logging
 import threading
+
 
 from typing  import Dict
 from bisect import bisect
@@ -12,6 +14,8 @@ from pprint import pprint
 from datetime import timedelta, datetime
 from rpyc.utils.server import ThreadedServer
 from typing import List, Set, Dict, Tuple, Callable, Iterator, Union, Optional, Any, Counter, Literal, NoReturn
+
+logging.basicConfig(level=logging.DEBUG)
 
 
 class VectorClock:
@@ -37,8 +41,6 @@ class Client(rpyc.Service):
         self.cache = dict() #* will store the routing table for some time.
         ''' Key to Controller node hash (or id)'''
         self.locate_key = dict()
-        ''' #!FIXME: Will contians the version number of keys in case of semantic'''
-        
         ''' node hash -> (vector clock(ip, port, ...), last_update_time) ''' 
         self.all_nodes = list()
         ''' Universal constant/configure by users'''
@@ -67,7 +69,7 @@ class Client(rpyc.Service):
     and then self.cache, we need to remove those carefully
     '''
     def thread_clean_cache(self) -> NoReturn:
-        print ("THREAD CALLED FOR CLEANING CACHE...")
+        logging.debug ("THREAD CALLED FOR CLEANING CACHE...")
         while True: 
             time.sleep(self.CACHE_TIMEOUT)
             stale_entries: list[Any] = list()
@@ -102,7 +104,7 @@ class Client(rpyc.Service):
         2) When we got self.INVALID_RESOURCE
     '''
     def update_cache(self, key, replica_nodes, controller_node) -> None:
-        print ("Updating cache...")
+        logging.debug ("Updating cache...")
         curr_time: float = time.time()
         self.locate_key[key] = controller_node 
         for node_hash, vc in replica_nodes.items():
@@ -117,7 +119,7 @@ class Client(rpyc.Service):
                 self.all_nodes.sort()
                 self.cache[node_hash] = {"vector_clock": vc, "updated_time": curr_time}
                 self.cache_lock.release()
-        print ("Updated Cache!")
+        logging.debug ("Updated Cache!")
     '''
     This function will fetch the routing table from some random node from self.nodes list
     '''
@@ -135,7 +137,7 @@ class Client(rpyc.Service):
                 self.update_cache(key=key, replica_nodes=replica_nodes, controller_node=controller_node)
                 break
             except Exception as e:
-                print (f"Some thing bad happened while fetching routing info...{e}")
+                logging.debug (f"Some thing bad happened while fetching routing info...{e}")
                 continue
         
 
@@ -168,7 +170,7 @@ class Client(rpyc.Service):
         controller_node_idx: int = bisect(self.all_nodes, controller_node)
         controller_node_idx = controller_node_idx - 1 if controller_node_idx else 0 
         n: int = len(self.all_nodes)
-        print (f'Len = {n} and self.N = {self.N}')
+        logging.debug (f'Len = {n} and self.N = {self.N}')
         key_contained_by = []
         #* Since it is a ring, not a linear chain, we need to do %
         for pos in range(0, min(n, self.N)):
@@ -180,9 +182,9 @@ class Client(rpyc.Service):
         for node in key_contained_by:
             try:
                 vc = self.cache[node]['vector_clock'] 
-                print (f' IP = {vc.ip} and PORT = {vc.port}')
+                logging.debug (f' IP = {vc.ip} and PORT = {vc.port}')
             except:
-                print ("Can't fetch")
+                logging.debug ("Can't fetch")
 
     '''
         Make this function really abstracted
@@ -190,11 +192,11 @@ class Client(rpyc.Service):
         Write the logic to read now, based on concillation algo.
     '''
     def exposed_get(self, key)-> Dict[str, Any]:
-        print ("GET is called!")
+        logging.debug ("GET is called!")
         controller_node, key_contained_by = self.get_key_containing_nodes(key=key)
         retry_count:int = 0
         while retry_count < self.RETRIES:
-            print (f"Retrying ... {retry_count + 1}" )
+            logging.debug (f"Retrying ... {retry_count + 1}" )
             self.getNodes(key_contained_by=key_contained_by)            
             retry_count += 1
             break_reason: int = self.FIVE_STAR # Invalid break reason
@@ -205,21 +207,21 @@ class Client(rpyc.Service):
                     vc = self.cache[node]['vector_clock'] 
                     url: Tuple[Any, Any] = (vc.ip, vc.port) 
                     conn = rpyc.connect(*url)
-                    print (f'=================')
+                    logging.debug (f'=================')
                     pprint (f"IP : {vc.ip} and PORT: {vc.port}")
-                    print (f'=================')
+                    logging.debug (f'=================')
                     conn._config['sync_request_timeout'] = 5
                     res = conn.root.exposed_get(key, allow_replicas)
-                    # print (f"Response : {res['status']}")
-                    print (f'Response : {res}')
+                    # logging.debug (f"Response : {res['status']}")
+                    logging.debug (f'Response : {res}')
                     if res and (res['status'] == self.SUCCESS): 
-                        print (f"Read successfully: {res['value']}")
+                        logging.debug (f"Read successfully: {res['value']}")
                         return {"status": self.SUCCESS, "value": res['value']}
                     elif res and (res['status'] == self.INVALID_RESOURCE): 
                         break_reason = self.INVALID_RESOURCE
                         # break
                 except Exception as e:
-                    print ("Some thing bad happen in get ", e)
+                    logging.debug ("Some thing bad happen in get ", e)
                     pass 
             if break_reason == self.INVALID_RESOURCE: 
                 self.update_cache(key=key, replica_nodes=res["replica_nodes"], controller_node=res["controller_node"])
@@ -232,12 +234,12 @@ class Client(rpyc.Service):
         We need this service to be mostly say ok to client
     '''
     def exposed_put(self, key, value) -> Dict[str, Any]:
-        print (f"PUT IS CALLED: {key}, {value}")
+        logging.debug (f"PUT IS CALLED: {key}, {value}")
         retry_count:int = 0
         
         while retry_count < self.RETRIES:
             controller_node, key_contained_by = self.get_key_containing_nodes(key=key)
-            print (f"Retrying ... {retry_count + 1}" )
+            logging.debug (f"Retrying ... {retry_count + 1}" )
             self.getNodes(key_contained_by=key_contained_by)            
             
             retry_count += 1
@@ -250,21 +252,21 @@ class Client(rpyc.Service):
                     allow_replicas = (node != controller_node) 
                     vc = self.cache[node]["vector_clock"] 
                     url = (vc.ip, vc.port) 
-                    print (f'=================')
+                    logging.debug (f'=================')
                     pprint (f"IP : {vc.ip} and PORT: {vc.port}")
-                    print (f'=================')
+                    logging.debug (f'=================')
                     conn = rpyc.connect(*url)
                     # conn._config['sync_request_timeout'] = None
                     res = conn.root.exposed_put(key, value, allow_replicas)
-                    print (f"Response : {res['status']}")
+                    logging.debug (f"Response : {res['status']}")
                     if res["status"] == self.SUCCESS: 
-                        print (f"Write successfully: {res['msg']}")
+                        logging.debug (f"Write successfully: {res['msg']}")
                         return {"status": self.SUCCESS, "value": res['msg']}
                     elif res["status"] == self.INVALID_RESOURCE: 
                         break_reason = self.INVALID_RESOURCE
                         break
                 except Exception as e:
-                    print ("Expection in client put", e)
+                    logging.debug ("Expection in client put", e)
                     pass 
             if break_reason == self.INVALID_RESOURCE: 
                 self.update_cache(key=key, replica_nodes=res["replica_nodes"], controller_node=res["controller_node"])
@@ -289,5 +291,5 @@ if __name__ == '__main__':
             'vnodes': 4
         }
     ]
-    print (f"Client is listening at port = {port}...")
+    logging.debug (f"Client is listening at port = {port}...")
     ThreadedServer(Client(nodes=nodes), hostname='0.0.0.0', port=port).start()

@@ -1,15 +1,18 @@
 import os 
-import rpyc
-import pickle
-import random
-import threading
 import math 
 import time
+import rpyc
+import random
+import pickle
+import logging
+import threading
 
 from typing  import Dict
 from bisect import bisect
 from datetime import timedelta, datetime
 from rpyc.utils.server import ThreadedServer
+
+logging.basicConfig(level=logging.DEBUG)
 
 class VectorClock:
     def __init__(self, ip:str, port:int, version_number:int, load:float, start_of_range:int) -> None:
@@ -57,7 +60,7 @@ class Client(rpyc.Service):
     and then self.cache, we need to remove those carefully
     '''
     def thread_clean_cache(self):
-        print ("THREAD CALLED FOR CLEANING CACHE...")
+        logging.debug ("THREAD CALLED FOR CLEANING CACHE...")
         while True: 
             time.sleep(self.CACHE_TIMEOUT)
             stale_entries = []
@@ -241,8 +244,6 @@ class Client(rpyc.Service):
                     pass 
             if break_reason == self.INVALID_RESOURCE: 
                 self.update_cache(key, res["replica_nodes"], res["controller_node"])
-            # else:
-            #     break
         return {"status": self.FAILURE, "msg": "Fail in PUT!"}
 
         pass
