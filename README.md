@@ -1,7 +1,8 @@
 # DynamoCS: A toy version of Amazon's Dynamo
 
 ## Introduction
-Amazon's Dynamo is a powerful and versatile distributed data storage system that was developed by Amazon Web Services (AWS). It is designed to provide scalability, high availability, and low latency for applications that require consistent, single-digit millisecond response times, even as the workload grows. Dynamo is a simple key-value store, used in prouduction environment at Amazon's. Most of Amazon's application do not need th efull power of SQL queries and thus Amazon want doesn't want to pursue traditional ACID semantics
+Amazon's Dynamo is a powerful and versatile distributed data storage system that was developed by Amazon Web Services (AWS). It is designed to provide scalability, high availability, and low latency for applications that require consistent, single-digit millisecond response times, even as the workload grows. Dynamo is a simple key-value store, used in prouduction environment at Amazon's. This is specifically used in their cart service (mentioned in the paper)
+
 
 ## Learning Goals
 - Reliable
